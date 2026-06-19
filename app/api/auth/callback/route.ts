@@ -14,7 +14,7 @@ export async function GET(request: Request) {
   if (tokenHash && type) {
     // Implicit flow — works across different browsers
     const result = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: type as 'signup' | 'email' });
-    data = result.data as typeof data;
+    data = result.data as unknown as typeof data;
     error = result.error;
   } else if (code) {
     // PKCE flow — same browser only

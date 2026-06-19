@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 import { CargoMarket } from '@/components/wagon-owner/CargoMarket';
 import type { Profile, GU12Order, Wagon } from '@/types';
 
-export type ExistingApp = { id: string; gu12_order_id: string; wagon_id: string; status: string };
+export type ExistingApp = { id: string; gu12_order_id: string; wagon_id: string };
 
 export default async function MarketPage() {
   const supabase = await createClient();
@@ -28,21 +28,16 @@ export default async function MarketPage() {
   const { data: myApps } = orderIds.length > 0
     ? await supabase
         .from('wagon_owner_pending_requests')
-        .select('id, gu12_order_id, wagon_id, status')
+        .select('id, gu12_order_id, wagon_id')
         .eq('wagon_owner_id', user.id)
         .in('gu12_order_id', orderIds)
     : { data: [] };
-
-  // Wagons with accepted status are busy — exclude from all orders
-  const busyWagonIds = new Set(
-    (myApps ?? []).filter((a) => a.status === 'accepted').map((a) => a.wagon_id)
-  );
 
   const availableOrders = (orders ?? []).filter(
     (o) => (o.quantity_fulfilled ?? 0) < o.quantity_planned
   );
 
-  const freeWagons = (wagons ?? []).filter((w) => !busyWagonIds.has(w.id));
+  const freeWagons = wagons ?? [];
 
   return (
     <CargoMarket

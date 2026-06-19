@@ -73,6 +73,16 @@ export function WagonVerificationForm({ profile }: { profile: Profile }) {
         <p className="text-sm text-gray-500 mt-0.5">Введите номер вагона для проверки по базе КТЖ (АСОУП / ЕК ИОДВ)</p>
       </div>
 
+      <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <span className="text-lg leading-none mt-0.5">⚠️</span>
+        <div>
+          <div className="font-semibold mb-0.5">Ответственность за достоверность данных</div>
+          <div className="text-amber-700 leading-relaxed">
+            Указывая технические характеристики вагона, вы подтверждаете их достоверность. Предоставление заведомо ложных сведений о грузоподъёмности, типе или состоянии вагона при заключении договора влечёт имущественную ответственность и может стать основанием для штрафных санкций со стороны КТЖ и контрагентов.
+          </div>
+        </div>
+      </div>
+
       <form onSubmit={handleVerify} className="flex items-end gap-3">
         <Input
           label="Номер вагона (8 цифр)"

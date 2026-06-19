@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { ContractsTable } from '@/components/shared/ContractsTable';
-import type { Contract } from '@/types';
+import type { Contract, Profile } from '@/types';
 
 export default async function ShipperContractsPage() {
   const supabase = await createClient();
@@ -17,8 +17,8 @@ export default async function ShipperContractsPage() {
     .order('created_at', { ascending: false });
 
   return (
-    <div className="space-y-5">
-      <div>
+    <div className="h-full flex flex-col gap-4 min-h-0">
+      <div className="shrink-0">
         <h2 className="text-lg font-semibold text-gray-900">Договора</h2>
         <p className="text-sm text-gray-500 mt-0.5">Подписанные и ожидающие подписания договора</p>
       </div>
@@ -26,6 +26,7 @@ export default async function ShipperContractsPage() {
         contracts={(contracts ?? []) as Contract[]}
         myBin={profile?.bin ?? ''}
         role="customer"
+        profile={profile as Profile}
         emptyHint="Они появятся после принятия заявки от перевозчика"
       />
     </div>

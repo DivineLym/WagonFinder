@@ -11,6 +11,8 @@ const PAGE_TITLES: Record<string, string> = {
   '/wagon-owner':              'Мой вагонный парк',
   '/wagon-owner/verify':       'Добавить вагон',
   '/wagon-owner/shipments':    'Заявки на вагоны',
+  '/wagon-owner/map':          'Карта вагонов',
+  '/profile':                  'Профиль и баланс',
 };
 
 export default async function DashboardLayout({

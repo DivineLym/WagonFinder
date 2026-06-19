@@ -8,7 +8,7 @@ import type { Profile } from '@/types';
 import {
   Train, Package, ClipboardList,
   LayoutDashboard, Settings, HeadphonesIcon,
-  LogOut, ChevronDown, User, Store,
+  LogOut, ChevronDown, User, Store, Map, Wallet,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -36,6 +36,7 @@ export function Sidebar({ profile }: SidebarProps) {
       ]
     : [
         { href: '/wagon-owner',              label: 'Мой парк',     icon: Train           },
+        { href: '/wagon-owner/map',          label: 'Карта вагонов', icon: Map            },
         { href: '/wagon-owner/market',       label: 'Биржа грузов', icon: Store           },
         { href: '/wagon-owner/shipments',    label: 'Заявки',       icon: ClipboardList   },
         { href: '/wagon-owner/contracts',    label: 'Договора',     icon: LayoutDashboard },
@@ -93,23 +94,45 @@ export function Sidebar({ profile }: SidebarProps) {
         {/* Divider */}
         <div className="my-2 border-t border-gray-100" />
 
-        {/* Other platform sections (decorative, matches SmartCargo look) */}
+        {/* Other platform sections */}
         {[
-          { label: 'Профиль',   icon: User,           href: '#' },
+          { label: 'Профиль',   icon: User,           href: '/profile' },
           { label: 'Поддержка', icon: HeadphonesIcon, href: '#' },
           { label: 'Настройки', icon: Settings,        href: '#' },
-        ].map(({ label, icon: Icon, href }) => (
-          <Link key={label} href={href}
-            className="flex items-center gap-2.5 px-3 py-[7px] rounded-lg text-[13px] text-gray-500 hover:bg-gray-50 hover:text-gray-800 transition-colors"
-          >
-            <Icon size={15} className="text-gray-400 shrink-0" />
-            {label}
-          </Link>
-        ))}
+        ].map(({ label, icon: Icon, href }) => {
+          const active = pathname === href;
+          return (
+            <Link key={label} href={href}
+              className={`flex items-center gap-2.5 px-3 py-[7px] rounded-lg text-[13px] transition-colors ${
+                active ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-800'
+              }`}
+            >
+              <Icon size={15} className={active ? 'text-white' : 'text-gray-400 shrink-0'} />
+              {label}
+            </Link>
+          );
+        })}
       </nav>
 
       {/* Bottom user block */}
-      <div className="border-t border-gray-100 p-3">
+      <div className="border-t border-gray-100 p-3 space-y-1">
+        {/* Balance chip */}
+        <Link href="/profile"
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+            profile.balance_kzt < 5000
+              ? 'bg-red-50 border border-red-200 hover:bg-red-100'
+              : 'bg-blue-50 border border-blue-100 hover:bg-blue-100'
+          }`}
+        >
+          <Wallet size={13} className={profile.balance_kzt < 5000 ? 'text-red-500' : 'text-blue-600'} />
+          <span className={`text-[12px] font-semibold flex-1 ${profile.balance_kzt < 5000 ? 'text-red-700' : 'text-blue-700'}`}>
+            {profile.balance_kzt.toLocaleString('ru-KZ')} ₸
+          </span>
+          {profile.balance_kzt < 5000 && (
+            <span className="text-[10px] text-red-500 font-medium">Пополнить</span>
+          )}
+        </Link>
+
         <div className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg">
           <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
             {(profile.full_name || profile.email).charAt(0).toUpperCase()}
@@ -120,7 +143,7 @@ export function Sidebar({ profile }: SidebarProps) {
           </div>
         </div>
         <button onClick={signOut}
-          className="flex items-center gap-2 px-3 py-1.5 w-full rounded-lg text-[12px] text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors cursor-pointer mt-1"
+          className="flex items-center gap-2 px-3 py-1.5 w-full rounded-lg text-[12px] text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors cursor-pointer"
         >
           <LogOut size={12} /> Выход
         </button>

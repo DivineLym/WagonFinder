@@ -1,75 +1,168 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { formatDate } from '@/lib/utils';
 import type { PendingApplication, RejectedApplication, Profile } from '@/types';
-import { CheckCircle, XCircle, Inbox } from 'lucide-react';
+import { CheckCircle, XCircle, Inbox, Search, ArrowRight, Clock } from 'lucide-react';
 
 const WAGON_TYPE_LABELS: Record<string, string> = {
   tank: 'Цистерна', hopper: 'Хоппер', flatcar: 'Платформа',
   boxcar: 'Крытый', gondola: 'Полувагон', refrigerator: 'Рефрижератор',
 };
 
+type GU12OrderInfo = {
+  id: string; gu12_number: string; cargo_name: string;
+  departure_esr_code: string; arrival_esr_code: string;
+  departure_station_name?: string; arrival_station_name?: string;
+  period_start: string; period_end: string;
+  cargo_etsng_code: string;
+  quantity_planned: number; quantity_fulfilled: number;
+};
+
 type AppWithDetails = PendingApplication & {
+  status?: string;
+  wagon_owner_paid_at?: string | null;
+  shipper_paid_at?: string | null;
   wagon: { number: string; wagon_type: string; payload_capacity_tons: number | null };
   wagon_owner: { company_name: string | null; full_name: string; bin: string | null };
+  gu12_order?: GU12OrderInfo;
+};
+
+type OutgoingRequest = {
+  id: string; created_at: string;
+  status?: string;
+  shipper_paid_at?: string | null;
+  wagon_owner_paid_at?: string | null;
+  wagon: { number: string; wagon_type: string; payload_capacity_tons: number | null };
+  wagon_owner: { company_name: string | null; full_name: string; bin: string | null };
+  gu12_order?: GU12OrderInfo;
 };
 
 type RejectedWithDetails = RejectedApplication & {
   wagon: { number: string; wagon_type: string; payload_capacity_tons: number | null };
   wagon_owner: { company_name: string | null; full_name: string; bin: string | null };
+  gu12_order?: GU12OrderInfo;
 };
 
 interface Props {
   applications: AppWithDetails[];
   rejected: RejectedWithDetails[];
+  outgoing?: OutgoingRequest[];
+  rejectedOutgoing?: OutgoingRequest[];
   myBin?: string;
   profile?: Profile;
 }
 
-export function ShipperShipmentsView({ applications, rejected, myBin = '', profile }: Props) {
+export function ShipperShipmentsView({ applications, rejected, outgoing = [], rejectedOutgoing = [], myBin = '', profile }: Props) {
   const [appList, setAppList] = useState<AppWithDetails[]>(applications);
   const [updatingApp, setUpdatingApp] = useState<string | null>(null);
+  const [acceptError, setAcceptError] = useState('');
   const [subTab, setSubTab] = useState<'pending' | 'rejected'>('pending');
+  const [filter, setFilter] = useState('');
+  const inFlightRef = useRef<Set<string>>(new Set());
+  const router = useRouter();
+  const [fulfilledDelta, setFulfilledDelta] = useState<Record<string, number>>({});
+
+  const orderFulfillment = useMemo(() => {
+    const map: Record<string, { planned: number; fulfilled: number }> = {};
+    applications.forEach((a) => {
+      const o = a.gu12_order;
+      if (o && !map[o.id]) map[o.id] = { planned: o.quantity_planned, fulfilled: o.quantity_fulfilled };
+    });
+    // Apply optimistic increments
+    Object.entries(fulfilledDelta).forEach(([orderId, delta]) => {
+      if (map[orderId]) map[orderId] = { ...map[orderId], fulfilled: map[orderId].fulfilled + delta };
+    });
+    return map;
+  }, [applications, fulfilledDelta]);
+
+  const filteredApps = useMemo(() => {
+    if (!filter.trim()) return appList;
+    const q = filter.toLowerCase();
+    return appList.filter((a) =>
+      a.gu12_order?.gu12_number?.toLowerCase().includes(q) ||
+      a.wagon?.number?.toLowerCase().includes(q) ||
+      a.wagon_owner?.company_name?.toLowerCase().includes(q) ||
+      a.wagon_owner?.full_name?.toLowerCase().includes(q)
+    );
+  }, [appList, filter]);
+
+  const filteredOutgoing = useMemo(() => {
+    if (!filter.trim()) return outgoing;
+    const q = filter.toLowerCase();
+    return outgoing.filter((r) =>
+      r.gu12_order?.gu12_number?.toLowerCase().includes(q) ||
+      r.wagon?.number?.toLowerCase().includes(q) ||
+      r.wagon_owner?.company_name?.toLowerCase().includes(q)
+    );
+  }, [outgoing, filter]);
+
+  const filteredRejected = useMemo(() => {
+    if (!filter.trim()) return rejected;
+    const q = filter.toLowerCase();
+    return rejected.filter((a) =>
+      a.gu12_order?.gu12_number?.toLowerCase().includes(q) ||
+      (a as unknown as AppWithDetails).wagon?.number?.toLowerCase().includes(q) ||
+      (a as unknown as AppWithDetails).wagon_owner?.company_name?.toLowerCase().includes(q)
+    );
+  }, [rejected, filter]);
+
+  const filteredRejectedOutgoing = useMemo(() => {
+    if (!filter.trim()) return rejectedOutgoing;
+    const q = filter.toLowerCase();
+    return rejectedOutgoing.filter((r) =>
+      r.gu12_order?.gu12_number?.toLowerCase().includes(q) ||
+      r.wagon?.number?.toLowerCase().includes(q) ||
+      r.wagon_owner?.company_name?.toLowerCase().includes(q)
+    );
+  }, [rejectedOutgoing, filter]);
+
+  function makeContractNum() {
+    return `ДУ-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${Math.floor(1000 + Math.random() * 9000)}`;
+  }
 
   async function updateAppStatus(appId: string, action: 'accepted' | 'rejected') {
+    if (inFlightRef.current.has(appId)) return;
+    inFlightRef.current.add(appId);
     setUpdatingApp(appId);
     const supabase = createClient();
     const app = appList.find((a) => a.id === appId);
-    if (!app) { setUpdatingApp(null); return; }
+    if (!app) { inFlightRef.current.delete(appId); setUpdatingApp(null); return; }
 
     if (action === 'accepted') {
-      const { error } = await supabase
-        .from('wagon_owner_pending_requests')
-        .update({ status: 'accepted' })
-        .eq('id', appId);
-
-      if (!error) {
-        const num = `ДУ-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${Math.floor(1000 + Math.random() * 9000)}`;
-        await supabase.from('contracts').insert({
-          application_id: appId,
-          contract_number: num,
-          executor_company: app.wagon_owner.company_name ?? app.wagon_owner.full_name,
-          executor_bin: app.wagon_owner.bin ?? '',
-          executor_name: app.wagon_owner.full_name,
-          customer_company: profile?.company_name ?? profile?.full_name ?? '',
-          customer_bin: myBin,
-          customer_name: profile?.full_name ?? '',
-          wagon_number: app.wagon.number,
-          wagon_type: app.wagon.wagon_type,
-          cargo_name: app.gu12_order?.cargo_name ?? '',
-          cargo_etsng: app.gu12_order?.cargo_etsng_code ?? '',
-          departure_station: app.gu12_order?.departure_station_name ?? app.gu12_order?.departure_esr_code ?? '',
-          arrival_station: app.gu12_order?.arrival_station_name ?? app.gu12_order?.arrival_esr_code ?? '',
-          period_start: app.gu12_order?.period_start ?? new Date().toISOString().slice(0,10),
-          period_end: app.gu12_order?.period_end ?? new Date().toISOString().slice(0,10),
-        });
-        if (app.gu12_order?.id) {
-          const { data: ord } = await supabase.from('gu12_orders').select('quantity_fulfilled').eq('id', app.gu12_order.id).single();
-          if (ord) await supabase.from('gu12_orders').update({ quantity_fulfilled: (ord.quantity_fulfilled ?? 0) + 1 }).eq('id', app.gu12_order.id);
-        }
-        setAppList((prev) => prev.filter((a) => a.id !== appId));
+      setAcceptError('');
+      // Create contract immediately with pending_payment status
+      const { error: contractErr } = await supabase.from('contracts').insert({
+        application_id: app.id,
+        contract_number: makeContractNum(),
+        status: 'pending_payment',
+        executor_company: app.wagon_owner.company_name ?? app.wagon_owner.full_name,
+        executor_bin: app.wagon_owner.bin ?? '',
+        executor_name: app.wagon_owner.full_name,
+        customer_company: profile?.company_name ?? profile?.full_name ?? '',
+        customer_bin: myBin,
+        customer_name: profile?.full_name ?? '',
+        wagon_number: app.wagon.number,
+        wagon_type: app.wagon.wagon_type,
+        cargo_name: app.gu12_order?.cargo_name ?? '',
+        cargo_etsng: app.gu12_order?.cargo_etsng_code ?? '',
+        departure_station: app.gu12_order?.departure_station_name ?? app.gu12_order?.departure_esr_code ?? '',
+        arrival_station: app.gu12_order?.arrival_station_name ?? app.gu12_order?.arrival_esr_code ?? '',
+        period_start: app.gu12_order?.period_start ?? new Date().toISOString().slice(0,10),
+        period_end: app.gu12_order?.period_end ?? new Date().toISOString().slice(0,10),
+      });
+      if (contractErr) {
+        setAcceptError(`Ошибка создания договора: ${contractErr.message}`);
+        inFlightRef.current.delete(appId);
+        setUpdatingApp(null);
+        return;
+      }
+      await supabase.from('wagon_owner_pending_requests').delete().eq('id', appId);
+      setAppList((prev) => prev.filter((a) => a.id !== appId));
+      if (app.gu12_order?.id) {
+        setFulfilledDelta((d) => ({ ...d, [app.gu12_order!.id]: (d[app.gu12_order!.id] ?? 0) + 1 }));
       }
     } else {
       await supabase.from('wagon_owner_rejected_requests').insert({
@@ -83,127 +176,318 @@ export function ShipperShipmentsView({ applications, rejected, myBin = '', profi
       setAppList((prev) => prev.filter((a) => a.id !== appId));
     }
 
+    inFlightRef.current.delete(appId);
     setUpdatingApp(null);
+    router.refresh();
   }
 
+  // Outgoing: shipper requested a wagon owner's wagon; if accepted by owner → contract already created by owner
+  // Nothing to do here on shipper side for outgoing (owner accepts/rejects)
+
+  const pendingTotal = appList.length + outgoing.length;
+
   return (
-    <div className="space-y-5">
-      <div>
+    <div className="h-full flex flex-col gap-4 min-h-0">
+      <div className="shrink-0">
         <h2 className="text-lg font-semibold text-gray-900">Заявки</h2>
-        <p className="text-sm text-gray-500 mt-0.5">Входящие заявки от перевозчиков</p>
+        <p className="text-sm text-gray-500 mt-0.5">Входящие и исходящие заявки на вагоны</p>
       </div>
 
-      {/* Sub-tabs */}
-      <div className="flex gap-1 border-b border-gray-200">
-        {([
-          { key: 'pending',  label: `Ожидающие${appList.length > 0 ? ` (${appList.length})` : ''}` },
-          { key: 'rejected', label: `Отказанные${rejected.length > 0 ? ` (${rejected.length})` : ''}` },
-        ] as const).map(({ key, label }) => (
-          <button key={key} onClick={() => setSubTab(key)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer ${
-              subTab === key ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >{label}</button>
-        ))}
+      {acceptError && (
+        <div className="flex items-center gap-2 text-sm rounded-lg bg-red-50 border border-red-200 px-4 py-2.5 text-red-700 shrink-0">
+          <span>{acceptError}</span>
+          <button onClick={() => setAcceptError('')} className="ml-auto text-xs underline cursor-pointer">Закрыть</button>
+        </div>
+      )}
+
+      {/* Tabs + filter */}
+      <div className="flex items-center gap-3 shrink-0">
+        <div className="flex gap-1 border-b border-gray-200 flex-1">
+          {([
+            { key: 'pending',  label: `Ожидающие${pendingTotal > 0 ? ` (${pendingTotal})` : ''}` },
+            { key: 'rejected', label: `Отказанные${(rejected.length + rejectedOutgoing.length) > 0 ? ` (${rejected.length + rejectedOutgoing.length})` : ''}` },
+          ] as const).map(({ key, label }) => (
+            <button key={key} onClick={() => setSubTab(key)}
+              className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer ${
+                subTab === key ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >{label}</button>
+          ))}
+        </div>
+        <div className="relative shrink-0">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+          <input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="№ ГУ-12 или вагон..."
+            className="pl-8 pr-3 py-1.5 text-xs rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 w-52"
+          />
+        </div>
       </div>
 
       {subTab === 'pending' && (
-        appList.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 border-2 border-dashed border-gray-200 rounded-xl bg-white text-center">
-            <Inbox size={36} className="text-gray-300 mb-3" />
-            <p className="text-gray-500 font-medium">Заявок пока нет</p>
-            <p className="text-sm text-gray-400 mt-1">Опубликуйте грузы на биржу чтобы получать заявки</p>
+        <div className="grid grid-rows-2 gap-4 flex-1 min-h-0">
+
+          {/* Incoming: wagon owners → shipper's orders */}
+          <div className="flex flex-col flex-1 min-h-0">
+            <h3 className="text-sm font-semibold text-gray-600 mb-3 shrink-0">
+              Входящие заявки от перевозчиков
+              {filteredApps.length > 0 && <span className="ml-2 text-xs font-normal text-gray-400">({filteredApps.length})</span>}
+            </h3>
+            {filteredApps.length === 0 ? (
+              <div className="flex-1 min-h-0 flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-xl bg-white text-center">
+                <Inbox size={28} className="text-gray-300 mb-2" />
+                <p className="text-gray-500 text-sm">{filter ? 'Ничего не найдено' : 'Нет входящих заявок'}</p>
+                {!filter && <p className="text-xs text-gray-400 mt-1">Опубликуйте грузы на биржу чтобы получать заявки</p>}
+              </div>
+            ) : (
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col flex-1 min-h-0">
+                <div className="overflow-auto flex-1 min-h-0">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 z-10">
+                      <tr className="border-b border-gray-100 bg-gray-50">
+                        {['Груз (ГУ-12)', 'Прогресс', 'Перевозчик', 'Вагон', 'Статус', 'Действие'].map((h) => (
+                          <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {filteredApps.map((app) => {
+                        const o = app.gu12_order;
+                        const f = o ? orderFulfillment[o.id] : null;
+                        const pct = f && f.planned > 0 ? Math.min(100, Math.round((f.fulfilled / f.planned) * 100)) : 0;
+                        return (
+                          <tr key={app.id} className="hover:bg-gray-50 transition-colors">
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <div className="font-mono text-xs text-blue-700 font-medium">{o?.gu12_number}</div>
+                              <div className="text-xs text-gray-500">{o?.cargo_name}</div>
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              {f ? (
+                                <div className="min-w-[80px]">
+                                  <div className="text-xs text-gray-500">
+                                    Подобрано вагонов: <span className="font-semibold text-gray-800">{f.fulfilled}</span> из <span className="font-semibold text-gray-800">{f.planned}</span>
+                                  </div>
+                                  <div className="mt-1 h-1.5 bg-gray-100 rounded-full overflow-hidden w-20">
+                                    <div className={`h-full rounded-full ${pct >= 100 ? 'bg-green-500' : 'bg-blue-500'}`} style={{ width: `${pct}%` }} />
+                                  </div>
+                                </div>
+                              ) : <span className="text-gray-300 text-xs">—</span>}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <div className="font-medium text-gray-900 text-xs">{app.wagon_owner.company_name ?? app.wagon_owner.full_name}</div>
+                              <div className="text-xs text-gray-400">БИН {app.wagon_owner.bin}</div>
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <div className="font-mono text-xs text-gray-800">{app.wagon.number}</div>
+                              <div className="text-xs text-gray-400">{WAGON_TYPE_LABELS[app.wagon.wagon_type]} · {app.wagon.payload_capacity_tons}т</div>
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                                <Clock size={10} /> Ожидает принятия
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex gap-1.5">
+                                <button disabled={updatingApp === app.id} onClick={() => updateAppStatus(app.id, 'accepted')}
+                                  className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg bg-green-50 border border-green-200 text-green-700 hover:bg-green-100 transition-colors cursor-pointer disabled:opacity-40">
+                                  <CheckCircle size={12} /> Принять
+                                </button>
+                                <button disabled={updatingApp === app.id} onClick={() => updateAppStatus(app.id, 'rejected')}
+                                  className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 transition-colors cursor-pointer disabled:opacity-40">
+                                  <XCircle size={12} /> Отклонить
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-gray-100 bg-gray-50">
-                    {['Груз (ГУ-12)', 'Перевозчик', 'Вагон', 'Дата', 'Действие'].map((h) => (
-                      <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {appList.map((app) => (
-                    <tr key={app.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <div className="font-mono text-xs text-blue-700 font-medium">{app.gu12_order?.gu12_number}</div>
-                        <div className="text-xs text-gray-500">{app.gu12_order?.cargo_name}</div>
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <div className="font-medium text-gray-900 text-xs">{app.wagon_owner.company_name ?? app.wagon_owner.full_name}</div>
-                        <div className="text-xs text-gray-400">БИН {app.wagon_owner.bin}</div>
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <div className="font-mono text-xs text-gray-800">{app.wagon.number}</div>
-                        <div className="text-xs text-gray-400">{WAGON_TYPE_LABELS[app.wagon.wagon_type]} · {app.wagon.payload_capacity_tons}т</div>
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{formatDate(app.created_at)}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex gap-1.5">
-                          <button disabled={updatingApp === app.id} onClick={() => updateAppStatus(app.id, 'accepted')}
-                            className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg bg-green-50 border border-green-200 text-green-700 hover:bg-green-100 transition-colors cursor-pointer disabled:opacity-40">
-                            <CheckCircle size={12} /> Принять
-                          </button>
-                          <button disabled={updatingApp === app.id} onClick={() => updateAppStatus(app.id, 'rejected')}
-                            className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 transition-colors cursor-pointer disabled:opacity-40">
-                            <XCircle size={12} /> Отклонить
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+
+          {/* Outgoing: shipper → wagon owners */}
+          <div className="flex flex-col flex-1 min-h-0">
+            <h3 className="text-sm font-semibold text-gray-600 mb-3 shrink-0">
+              Мои отправленные заявки
+              {filteredOutgoing.length > 0 && <span className="ml-2 text-xs font-normal text-gray-400">({filteredOutgoing.length})</span>}
+            </h3>
+            {filteredOutgoing.length === 0 ? (
+              <div className="flex-1 min-h-0 flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-xl bg-white text-center">
+                <Inbox size={28} className="text-gray-300 mb-2" />
+                <p className="text-gray-500 text-sm">{filter ? 'Ничего не найдено' : 'Нет отправленных заявок'}</p>
+              </div>
+            ) : (
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col flex-1 min-h-0">
+                <div className="overflow-auto flex-1 min-h-0">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 z-10">
+                      <tr className="border-b border-gray-100 bg-gray-50">
+                        {['Груз (ГУ-12)', 'Перевозчик', 'Вагон', 'Маршрут', 'Статус', 'Действие'].map((h) => (
+                          <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {filteredOutgoing.map((req) => {
+                        const o = req.gu12_order;
+                        return (
+                          <tr key={req.id} className="hover:bg-gray-50 transition-colors">
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <div className="font-mono text-xs text-blue-700 font-medium">{o?.gu12_number ?? '—'}</div>
+                              <div className="text-xs text-gray-500">{o?.cargo_name}</div>
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <div className="font-medium text-gray-900 text-xs">{req.wagon_owner.company_name ?? req.wagon_owner.full_name}</div>
+                              <div className="text-xs text-gray-400">БИН {req.wagon_owner.bin}</div>
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <div className="font-mono text-xs text-gray-800">{req.wagon.number}</div>
+                              <div className="text-xs text-gray-400">{WAGON_TYPE_LABELS[req.wagon.wagon_type]} · {req.wagon.payload_capacity_tons}т</div>
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <div className="flex items-center gap-1 text-xs">
+                                <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">{o?.departure_esr_code}</span>
+                                <ArrowRight size={10} className="text-gray-400" />
+                                <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">{o?.arrival_esr_code}</span>
+                              </div>
+                              <div className="text-xs text-gray-400 mt-0.5">{o?.departure_station_name} → {o?.arrival_station_name}</div>
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                                <Clock size={10} /> Ожидает ответа перевозчика
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-xs text-gray-400">
+                              —
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
-        )
+        </div>
       )}
 
       {subTab === 'rejected' && (
-        rejected.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 border-2 border-dashed border-gray-200 rounded-xl bg-white text-center">
-            <XCircle size={36} className="text-gray-200 mb-3" />
-            <p className="text-gray-500 font-medium">Нет отказанных заявок</p>
+        <div className="grid grid-rows-2 gap-4 flex-1 min-h-0">
+          {/* Rejected incoming */}
+          <div className="flex flex-col flex-1 min-h-0">
+            <h3 className="text-sm font-semibold text-gray-600 mb-3 shrink-0">
+              Отказанные входящие
+              {filteredRejected.length > 0 && <span className="ml-2 text-xs font-normal text-gray-400">({filteredRejected.length})</span>}
+            </h3>
+            {filteredRejected.length === 0 ? (
+              <div className="flex-1 min-h-0 flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-xl bg-white text-center">
+                <XCircle size={28} className="text-gray-200 mb-2" />
+                <p className="text-gray-500 text-sm">{filter ? 'Ничего не найдено' : 'Нет отказанных входящих заявок'}</p>
+              </div>
+            ) : (
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col flex-1 min-h-0">
+                <div className="overflow-auto flex-1 min-h-0">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 z-10">
+                      <tr className="border-b border-gray-100 bg-gray-50">
+                        {['Груз (ГУ-12)', 'Перевозчик', 'Вагон', 'Причина / Дата'].map((h) => (
+                          <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {filteredRejected.map((app) => {
+                        const wd = app as unknown as AppWithDetails;
+                        return (
+                          <tr key={app.id} className="hover:bg-gray-50 transition-colors">
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <div className="font-mono text-xs text-blue-700 font-medium">{app.gu12_order?.gu12_number}</div>
+                              <div className="text-xs text-gray-500">{app.gu12_order?.cargo_name}</div>
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <div className="font-medium text-gray-900 text-xs">{wd.wagon_owner?.company_name ?? wd.wagon_owner?.full_name ?? '—'}</div>
+                              <div className="text-xs text-gray-400">БИН {wd.wagon_owner?.bin ?? '—'}</div>
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <div className="font-mono text-xs text-gray-800">{wd.wagon?.number ?? '—'}</div>
+                              <div className="text-xs text-gray-400">{WAGON_TYPE_LABELS[wd.wagon?.wagon_type ?? ''] ?? ''}</div>
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              {app.rejection_reason && <div className="text-xs text-gray-500 mb-0.5">{app.rejection_reason}</div>}
+                              <span className="flex items-center gap-1 text-xs text-red-400"><XCircle size={11} /> {formatDate(app.created_at)}</span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-gray-100 bg-gray-50">
-                    {['Груз (ГУ-12)', 'Перевозчик', 'Вагон', 'Дата отказа'].map((h) => (
-                      <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {rejected.map((app) => (
-                    <tr key={app.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <div className="font-mono text-xs text-blue-700 font-medium">{app.gu12_order?.gu12_number}</div>
-                        <div className="text-xs text-gray-500">{app.gu12_order?.cargo_name}</div>
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <div className="font-medium text-gray-900 text-xs">{(app as unknown as AppWithDetails).wagon_owner?.company_name ?? (app as unknown as AppWithDetails).wagon_owner?.full_name ?? '—'}</div>
-                        <div className="text-xs text-gray-400">БИН {(app as unknown as AppWithDetails).wagon_owner?.bin ?? '—'}</div>
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <div className="font-mono text-xs text-gray-800">{(app as unknown as AppWithDetails).wagon?.number ?? '—'}</div>
-                        <div className="text-xs text-gray-400">{WAGON_TYPE_LABELS[(app as unknown as AppWithDetails).wagon?.wagon_type ?? ''] ?? ''}</div>
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">
-                        <span className="flex items-center gap-1 text-red-400"><XCircle size={11} /> {formatDate(app.created_at)}</span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+
+          {/* Rejected outgoing */}
+          <div className="flex flex-col flex-1 min-h-0">
+            <h3 className="text-sm font-semibold text-gray-600 mb-3 shrink-0">
+              Отказанные исходящие
+              {filteredRejectedOutgoing.length > 0 && <span className="ml-2 text-xs font-normal text-gray-400">({filteredRejectedOutgoing.length})</span>}
+            </h3>
+            {filteredRejectedOutgoing.length === 0 ? (
+              <div className="flex-1 min-h-0 flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-xl bg-white text-center">
+                <XCircle size={28} className="text-gray-200 mb-2" />
+                <p className="text-gray-500 text-sm">{filter ? 'Ничего не найдено' : 'Нет отказанных исходящих заявок'}</p>
+              </div>
+            ) : (
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col flex-1 min-h-0">
+                <div className="overflow-auto flex-1 min-h-0">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 z-10">
+                      <tr className="border-b border-gray-100 bg-gray-50">
+                        {['Груз (ГУ-12)', 'Перевозчик', 'Вагон', 'Маршрут', 'Дата'].map((h) => (
+                          <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {filteredRejectedOutgoing.map((req) => {
+                        const o = req.gu12_order;
+                        return (
+                          <tr key={req.id} className="hover:bg-gray-50 transition-colors">
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <div className="font-mono text-xs text-blue-700 font-medium">{o?.gu12_number ?? '—'}</div>
+                              <div className="text-xs text-gray-500">{o?.cargo_name}</div>
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <div className="font-medium text-gray-900 text-xs">{req.wagon_owner.company_name ?? req.wagon_owner.full_name}</div>
+                              <div className="text-xs text-gray-400">БИН {req.wagon_owner.bin}</div>
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <div className="font-mono text-xs text-gray-800">{req.wagon.number}</div>
+                              <div className="text-xs text-gray-400">{WAGON_TYPE_LABELS[req.wagon.wagon_type]}</div>
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <div className="flex items-center gap-1 text-xs">
+                                <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">{o?.departure_esr_code}</span>
+                                <ArrowRight size={10} className="text-gray-400" />
+                                <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">{o?.arrival_esr_code}</span>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{formatDate(req.created_at)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
-        )
+        </div>
       )}
     </div>
   );

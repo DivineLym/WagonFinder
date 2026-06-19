@@ -19,8 +19,19 @@ export interface Profile {
   company_name: string | null;
   phone: string | null;
   verification_status: VerificationStatus;
+  balance_kzt: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface BalanceTransaction {
+  id: string;
+  profile_id: string;
+  amount_kzt: number;
+  type: 'top_up' | 'commission' | 'refund';
+  description: string | null;
+  contract_id: string | null;
+  created_at: string;
 }
 
 export interface Wagon {
@@ -108,6 +119,7 @@ export interface Contract {
   id: string;
   application_id: string;
   contract_number: string;
+  status: 'pending_payment' | 'pending_signature' | 'signed';
   executor_company: string;
   executor_bin: string;
   executor_name: string;
@@ -122,6 +134,8 @@ export interface Contract {
   arrival_station: string;
   period_start: string;
   period_end: string;
+  executor_paid_at: string | null;
+  customer_paid_at: string | null;
   executor_signed_at: string | null;
   customer_signed_at: string | null;
   created_at: string;
