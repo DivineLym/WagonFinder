@@ -20,7 +20,7 @@ export default async function ShipperWagonsPage() {
       .eq('status', 'active'),
     supabase
       .from('gu12_orders')
-      .select('*')
+      .select('*, etsng_cargos(name,wagon_type_required), departure_station:esr_stations!departure_esr_code(name), arrival_station:esr_stations!arrival_esr_code(name)')
       .eq('shipper_id', user.id)
       .in('status', ['active', 'partially_fulfilled'])
       .order('period_start'),

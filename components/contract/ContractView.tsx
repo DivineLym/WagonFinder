@@ -1,20 +1,28 @@
 'use client';
 
 import { useState } from 'react';
+import { IMaskInput } from 'react-imask';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
 import type { Profile } from '@/types';
 import { CheckCircle, Download, Shield, AlertCircle, Phone, Mail } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 
 const WAGON_TYPE_LABELS: Record<string, string> = {
   tank: 'Цистерна', hopper: 'Хоппер', flatcar: 'Платформа',
   boxcar: 'Крытый вагон', gondola: 'Полувагон', refrigerator: 'Рефрижератор',
 };
 
+interface ContractWagon {
+  id: string;
+  wagon_number: string;
+  wagon_type: string;
+}
+
 interface Contract {
   id: string;
-  application_id: string;
+  application_id: string | null;
   contract_number: string;
   executor_company: string;
   executor_bin: string;
@@ -22,8 +30,8 @@ interface Contract {
   customer_company: string;
   customer_bin: string;
   customer_name: string;
-  wagon_number: string;
-  wagon_type: string;
+  wagon_number: string | null;
+  wagon_type: string | null;
   cargo_name: string;
   cargo_etsng: string;
   departure_station: string;
@@ -32,7 +40,12 @@ interface Contract {
   period_end: string;
   executor_signed_at: string | null;
   customer_signed_at: string | null;
+  executor_phone: string | null;
+  executor_email: string | null;
+  customer_phone: string | null;
+  customer_email: string | null;
   created_at: string;
+  contract_wagons?: ContractWagon[];
 }
 
 interface Props {
@@ -49,16 +62,23 @@ function fmtKzt(n: number) { return n.toLocaleString('ru-KZ') + ' ₸'; }
 const KZ_MONTHS = ['қаңтар','ақпан','наурыз','сәуір','мамыр','маусым','шілде','тамыз','қыркүйек','қазан','қараша','желтоқсан'];
 
 export function ContractView({ contract: initial, profile }: Props) {
+  const tc = useTranslations('contracts');
   const [contract, setContract] = useState(initial);
   const [signing, setSigning] = useState(false);
   const [signError, setSignError] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
+  const [emailTouched, setEmailTouched] = useState(false);
+
   const router = useRouter();
 
   function downloadPdf() {
     const c = contract;
-    const wagonLabel = WAGON_TYPE_LABELS[c.wagon_type] ?? c.wagon_type;
+    const wagons = c.contract_wagons && c.contract_wagons.length > 0
+      ? c.contract_wagons
+      : c.wagon_number ? [{ id: '', wagon_number: c.wagon_number, wagon_type: c.wagon_type ?? '' }] : [];
+    const wagonListRu = wagons.map((w) => `вагон <strong>${w.wagon_number}</strong> (${WAGON_TYPE_LABELS[w.wagon_type] ?? w.wagon_type})`).join(', ');
+    const wagonListKk = wagons.map((w) => `вагон <strong>${w.wagon_number}</strong> (${WAGON_TYPE_LABELS[w.wagon_type] ?? w.wagon_type})`).join(', ');
     const today = new Date(c.created_at);
     const city = c.departure_station.split('-')[0].split(' ')[0];
     const dateStr = `«${today.getDate()}» ${today.toLocaleDateString('ru-RU', { month: 'long' })} ${today.getFullYear()}`;
@@ -97,7 +117,7 @@ export function ContractView({ contract: initial, profile }: Props) {
 
         <p class="section-title">1. ПРЕДМЕТ НАСТОЯЩЕГО ДОГОВОРА</p>
         <p>1.1. Исполнитель обязуется предоставлять Заказчику за плату вагоны (контейнеры) для перевозки грузов во внутриреспубликанском и международном сообщениях, а Заказчик принять и оплатить оказанные услуги.</p>
-        <p>1.2. Подвижной состав: вагон <strong>${c.wagon_number}</strong>, тип: <strong>${wagonLabel}</strong>.</p>
+        <p>1.2. Подвижной состав: ${wagonListRu}.</p>
         <p>1.3. Груз: <strong>${c.cargo_name}</strong> (ЕТСНГ: ${c.cargo_etsng}). Маршрут: <strong>${c.departure_station} → ${c.arrival_station}</strong>.</p>
         <p>1.4. Период подачи: <strong>${fmt(c.period_start)} – ${fmt(c.period_end)}</strong>.</p>
         <p>1.5. Стоимость услуг определяется Сторонами в Протоколе согласования договорных цен, являющемся неотъемлемой частью настоящего Договора.</p>
@@ -202,7 +222,7 @@ export function ContractView({ contract: initial, profile }: Props) {
 
         <p class="section-title">1. ОСЫ ШАРТТЫҢ МӘНІ</p>
         <p>1.1. Орындаушы Тапсырыс берушіге ақы төленетін негізде ішкі және халықаралық қатынастарда жүк тасымалдау үшін вагондар (контейнерлер) беруге міндеттенеді, ал Тапсырыс беруші оларды қабылдап, көрсетілген қызметке ақы төлеуге міндеттенеді.</p>
-        <p>1.2. Жылжымалы құрам: вагон <strong>${c.wagon_number}</strong>, түрі: <strong>${wagonLabel}</strong>.</p>
+        <p>1.2. Жылжымалы құрам: ${wagonListKk}.</p>
         <p>1.3. Жүк: <strong>${c.cargo_name}</strong> (ЕТСНГ: ${c.cargo_etsng}). Бағыт: <strong>${c.departure_station} → ${c.arrival_station}</strong>.</p>
         <p>1.4. Беру кезеңі: <strong>${fmt(c.period_start)} – ${fmt(c.period_end)}</strong>.</p>
         <p>1.5. Қызмет құны Шарттың ажырамас бөлігі болып табылатын Шарттық бағаларды келісу хаттамасында айқындалады.</p>
@@ -320,7 +340,8 @@ export function ContractView({ contract: initial, profile }: Props) {
   const mySigned = isExecutor ? !!contract.executor_signed_at : isCustomer ? !!contract.customer_signed_at : false;
   const bothSigned = !!contract.executor_signed_at && !!contract.customer_signed_at;
 
-  const canSign = phone.trim().length >= 7 && email.trim().includes('@');
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
+  const canSign = !phone.includes('_') && phone.replace(/\D/g, '').length >= 11 && emailValid;
 
   async function sign() {
     if (!canSign) return;
@@ -328,9 +349,11 @@ export function ContractView({ contract: initial, profile }: Props) {
     setSignError('');
     const supabase = createClient();
     const field = isExecutor ? 'executor_signed_at' : 'customer_signed_at';
+    const phoneField = isExecutor ? 'executor_phone' : 'customer_phone';
+    const emailField = isExecutor ? 'executor_email' : 'customer_email';
     const now = new Date().toISOString();
     const otherSigned = isExecutor ? !!contract.customer_signed_at : !!contract.executor_signed_at;
-    const updates: Record<string, string> = { [field]: now };
+    const updates: Record<string, string> = { [field]: now, [phoneField]: phone.trim(), [emailField]: email.trim() };
     if (otherSigned) updates.status = 'signed';
     const { error } = await supabase.from('contracts').update(updates).eq('id', contract.id);
     if (error) { setSignError(error.message); } else { setContract((c) => ({ ...c, ...updates })); router.refresh(); }
@@ -341,48 +364,44 @@ export function ContractView({ contract: initial, profile }: Props) {
   const city = contract.departure_station.split('-')[0].split(' ')[0];
 
   return (
-    <div className="overflow-y-auto min-h-0"><div className="max-w-4xl mx-auto space-y-5 pb-8">
+    <div className="h-full flex flex-col min-h-0">
+    <div className="max-w-4xl mx-auto w-full flex flex-col gap-5 h-full min-h-0">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between gap-4 shrink-0">
         <div>
-          <h2 className="text-lg font-semibold text-gray-900">Договор № {contract.contract_number}</h2>
-          <p className="text-sm text-gray-500 mt-0.5">Оказание услуг по предоставлению подвижного состава (контейнера)</p>
+          <h2 className="text-lg font-semibold text-gray-900">{tc('contractNumber')} {contract.contract_number}</h2>
+          <p className="text-sm text-gray-500 mt-0.5">{tc('contractSubtitle')}</p>
+          {/* Signing status — compact chips */}
+          <div className="flex gap-2 mt-2 flex-wrap">
+            {[
+              { label: tc('executor'), company: contract.executor_company, signed_at: contract.executor_signed_at },
+              { label: tc('customer'), company: contract.customer_company,  signed_at: contract.customer_signed_at },
+            ].map(({ label, company, signed_at }) => (
+              <div key={label} className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border ${signed_at ? 'border-green-200 bg-green-50 text-green-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                {signed_at ? <CheckCircle size={11} /> : <Shield size={11} />}
+                <span className="font-medium">{label}:</span>
+                <span>{company}</span>
+                {signed_at && <span className="text-green-500">· {fmt(signed_at)}</span>}
+              </div>
+            ))}
+          </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0">
           {bothSigned && (
             <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 border border-green-200 px-3 py-1.5 rounded-lg">
-              <CheckCircle size={14} /> Договор подписан обеими сторонами
+              <CheckCircle size={14} /> {tc('bothSigned')}
             </div>
           )}
-          <Button variant="secondary" size="sm" onClick={downloadPdf}>
-            <Download size={14} /> Скачать PDF
-          </Button>
+          {bothSigned && (
+            <Button variant="secondary" size="sm" onClick={downloadPdf}>
+              <Download size={14} /> {tc('downloadPdf')}
+            </Button>
+          )}
         </div>
-      </div>
-
-      {/* Signing status */}
-      <div className="grid grid-cols-2 gap-3">
-        {[
-          { label: 'Исполнитель', company: contract.executor_company, name: contract.executor_name, signed_at: contract.executor_signed_at },
-          { label: 'Заказчик',   company: contract.customer_company,  name: contract.customer_name,  signed_at: contract.customer_signed_at },
-        ].map(({ label, company, name, signed_at }) => (
-          <div key={label} className={`rounded-xl border p-4 ${signed_at ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-white'}`}>
-            <div className="text-xs text-gray-500 mb-1">{label}</div>
-            <div className="font-semibold text-gray-900 text-sm">{company}</div>
-            <div className="text-xs text-gray-500">{name}</div>
-            {signed_at ? (
-              <div className="flex items-center gap-1.5 mt-2 text-xs text-green-700">
-                <CheckCircle size={12} /> Подписано {fmt(signed_at)}
-              </div>
-            ) : (
-              <div className="text-xs text-amber-600 mt-2">Ожидает подписи</div>
-            )}
-          </div>
-        ))}
       </div>
 
       {/* Contract body — bilingual two-column */}
-      <div id="contract-body" className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden font-serif text-[12px] leading-relaxed text-gray-800">
+      <div id="contract-body" className="flex-1 min-h-0 overflow-y-auto bg-white rounded-xl border border-gray-200 shadow-sm font-serif text-[12px] leading-relaxed text-gray-800">
         <div className="grid grid-cols-2 divide-x divide-gray-200">
 
           {/* ── LEFT: Russian ── */}
@@ -409,7 +428,14 @@ export function ContractView({ contract: initial, profile }: Props) {
             <p className="mb-1 text-xs">1.4. Настоящим Договором Заказчик даёт своё согласие Исполнителю на списание с единого лицевого счёта Заказчика (далее — ЕЛС), открытого в АО «КТЖ–Грузовые перевозки», всех сумм, подлежащих оплате Исполнителю по настоящему Договору, включая суммы неустойки.</p>
             <p className="mb-1 text-xs">1.5. Деятельность Сторон регламентируется: Соглашением о международном Грузовом Сообщении (СМГС); Тарифной политикой железных дорог государств-участников СНГ; Тарифным руководством, действующим на дату оказания услуг; Законом РК от 8 декабря 2001 года № 266-II «О железнодорожном транспорте»; Правилами перевозок грузов (Приказ от 02 августа 2019 года № 612); Правилами предоставления услуг оператора вагонов (контейнеров), утверждёнными Приказом от 19 октября 2012 года № 709; условиями настоящего Договора и другими нормативно-правовыми актами РК.</p>
             <p className="mb-1 text-xs">1.6. Термины: <em>Вагон</em> — несамоходное транспортное средство, которым Исполнитель владеет на праве собственности или ином законном основании. <em>Грузополучатель</em> — лицо, получающее груз, указанное в перевозочных документах. <em>Грузоотправитель</em> — лицо, отправляющее груз. <em>Простаивающий Вагон</em> — Вагон, задержанный на промежуточных станциях по независящим от Исполнителя причинам.</p>
-            <p className="mb-3 text-xs">Подвижной состав по настоящему Договору: вагон <strong>{contract.wagon_number}</strong>, тип: <strong>{WAGON_TYPE_LABELS[contract.wagon_type] ?? contract.wagon_type}</strong>. Груз: <strong>{contract.cargo_name}</strong> (ЕТСНГ: {contract.cargo_etsng}). Маршрут: <strong>{contract.departure_station} → {contract.arrival_station}</strong>. Период подачи: <strong>{fmt(contract.period_start)} – {fmt(contract.period_end)}</strong>.</p>
+            <p className="mb-3 text-xs">Подвижной состав по настоящему Договору: {
+              (contract.contract_wagons && contract.contract_wagons.length > 0
+                ? contract.contract_wagons
+                : contract.wagon_number ? [{ id: '', wagon_number: contract.wagon_number, wagon_type: contract.wagon_type ?? '' }] : []
+              ).map((w, i) => (
+                <span key={w.id || i}>{i > 0 ? ', ' : ''}<strong>{w.wagon_number}</strong> ({WAGON_TYPE_LABELS[w.wagon_type] ?? w.wagon_type})</span>
+              ))
+            }. Груз: <strong>{contract.cargo_name}</strong> (ЕТСНГ: {contract.cargo_etsng}). Маршрут: <strong>{contract.departure_station} → {contract.arrival_station}</strong>. Период подачи: <strong>{fmt(contract.period_start)} – {fmt(contract.period_end)}</strong>.</p>
 
             <div className="font-bold text-center mt-4 mb-1 text-xs uppercase tracking-wide">2. Права и обязанности Сторон</div>
             <p className="mb-1 text-xs"><strong>2.1. Исполнитель обязан:</strong></p>
@@ -531,6 +557,25 @@ export function ContractView({ contract: initial, profile }: Props) {
                 <div>{contract.executor_company}</div>
                 <div className="text-gray-500">БИН: {contract.executor_bin}</div>
                 <div className="text-gray-500">{contract.executor_name}</div>
+                {contract.executor_signed_at ? (
+                  <>
+                    {contract.executor_phone && <div className="text-gray-500">Тел: {contract.executor_phone}</div>}
+                    {contract.executor_email && <div className="text-gray-500">Email: {contract.executor_email}</div>}
+                  </>
+                ) : isExecutor ? (
+                  <div className="mt-1 space-y-1">
+                    <IMaskInput mask="+7 (000) 000-00-00" value={phone} onAccept={(v: string) => setPhone(v)} lazy={false} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 bg-white" />
+                    <div>
+                      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} onBlur={() => setEmailTouched(true)} placeholder="example@company.kz" className={`w-full border rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 bg-white ${emailTouched && !emailValid ? 'border-red-400 focus:ring-red-300' : 'border-gray-300 focus:ring-blue-300'}`} />
+                      {emailTouched && !emailValid && <div className="text-[10px] text-red-500 mt-0.5">Введите корректный email (example@company.kz)</div>}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-1 space-y-1">
+                    <div className="border border-dashed border-gray-300 rounded px-2 py-1 text-xs text-gray-400">Телефон</div>
+                    <div className="border border-dashed border-gray-300 rounded px-2 py-1 text-xs text-gray-400">Email</div>
+                  </div>
+                )}
                 <div className="mt-3 h-8 border-b border-dashed border-gray-300 flex items-end pb-0.5">
                   {contract.executor_signed_at && <span className="text-green-700 flex items-center gap-1"><Shield size={10} /> ЭЦП {fmt(contract.executor_signed_at)}</span>}
                 </div>
@@ -541,6 +586,25 @@ export function ContractView({ contract: initial, profile }: Props) {
                 <div>{contract.customer_company}</div>
                 <div className="text-gray-500">БИН: {contract.customer_bin}</div>
                 <div className="text-gray-500">{contract.customer_name}</div>
+                {contract.customer_signed_at ? (
+                  <>
+                    {contract.customer_phone && <div className="text-gray-500">Тел: {contract.customer_phone}</div>}
+                    {contract.customer_email && <div className="text-gray-500">Email: {contract.customer_email}</div>}
+                  </>
+                ) : isCustomer ? (
+                  <div className="mt-1 space-y-1">
+                    <IMaskInput mask="+7 (000) 000-00-00" value={phone} onAccept={(v: string) => setPhone(v)} lazy={false} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 bg-white" />
+                    <div>
+                      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} onBlur={() => setEmailTouched(true)} placeholder="example@company.kz" className={`w-full border rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 bg-white ${emailTouched && !emailValid ? 'border-red-400 focus:ring-red-300' : 'border-gray-300 focus:ring-blue-300'}`} />
+                      {emailTouched && !emailValid && <div className="text-[10px] text-red-500 mt-0.5">Введите корректный email (example@company.kz)</div>}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-1 space-y-1">
+                    <div className="border border-dashed border-gray-300 rounded px-2 py-1 text-xs text-gray-400">Телефон</div>
+                    <div className="border border-dashed border-gray-300 rounded px-2 py-1 text-xs text-gray-400">Email</div>
+                  </div>
+                )}
                 <div className="mt-3 h-8 border-b border-dashed border-gray-300 flex items-end pb-0.5">
                   {contract.customer_signed_at && <span className="text-green-700 flex items-center gap-1"><Shield size={10} /> ЭЦП {fmt(contract.customer_signed_at)}</span>}
                 </div>
@@ -573,7 +637,14 @@ export function ContractView({ contract: initial, profile }: Props) {
             <p className="mb-1 text-xs">1.4. Осы Шартпен Тапсырыс беруші АО «КТЖ–Жүк тасымалдары» компаниясында ашылған Тапсырыс берушінің бірыңғай жеке шотынан (бұдан әрі — БЖШ) осы Шарт бойынша Орындаушыға төленуге жататын барлық сомаларды, соның ішінде тұрақсыздық айыпсомаларын есептен шығаруға Орындаушыға өзінің келісімін береді.</p>
             <p className="mb-1 text-xs">1.5. Тараптардың қызметін реттейді: Халықаралық жүк қатынасы туралы Келісім (ХЖҚК); ТМД мемлекеттерінің теміржолдарының Тарифтік саясаты; қызметтер көрсету күніне қолданылатын Тарифтік нұсқаулық; ҚР 2001 жылғы 8 желтоқсандағы № 266-II «Теміржол көлігі туралы» Заңы; Жүктерді тасымалдау ережелері (2019 жылғы 02 тамыздағы № 612 бұйрық); Вагон (контейнер) операторының қызметтерін ұсыну ережелері (2012 жылғы 19 қазандағы № 709 бұйрық); осы Шарт талаптары мен ҚР өзге де нормативтік-құқықтық актілері.</p>
             <p className="mb-1 text-xs">1.6. Терминдер: <em>Вагон</em> — Орындаушы меншік немесе өзге заңды негізде иеленетін өздігінен жүрмейтін көлік құралы. <em>Жүк алушы</em> — жүкті алатын және тасымалдау құжаттарында көрсетілген тұлға. <em>Жүк жөнелтуші</em> — жүкті жөнелтетін және тасымалдау құжаттарында көрсетілген тұлға. <em>Бос тұрып қалған Вагон</em> — Орындаушыға тәуелсіз себептер бойынша аралық теміржол стансаларында тоқтатылған Вагон.</p>
-            <p className="mb-3 text-xs">Осы Шарт бойынша жылжымалы құрам: вагон <strong>{contract.wagon_number}</strong>, түрі: <strong>{WAGON_TYPE_LABELS[contract.wagon_type] ?? contract.wagon_type}</strong>. Жүк: <strong>{contract.cargo_name}</strong> (ЕТСНГ: {contract.cargo_etsng}). Бағыт: <strong>{contract.departure_station} → {contract.arrival_station}</strong>. Беру кезеңі: <strong>{fmt(contract.period_start)} – {fmt(contract.period_end)}</strong>.</p>
+            <p className="mb-3 text-xs">Осы Шарт бойынша жылжымалы құрам: {
+              (contract.contract_wagons && contract.contract_wagons.length > 0
+                ? contract.contract_wagons
+                : contract.wagon_number ? [{ id: '', wagon_number: contract.wagon_number, wagon_type: contract.wagon_type ?? '' }] : []
+              ).map((w, i) => (
+                <span key={w.id || i}>{i > 0 ? ', ' : ''}<strong>{w.wagon_number}</strong> ({WAGON_TYPE_LABELS[w.wagon_type] ?? w.wagon_type})</span>
+              ))
+            }. Жүк: <strong>{contract.cargo_name}</strong> (ЕТСНГ: {contract.cargo_etsng}). Бағыт: <strong>{contract.departure_station} → {contract.arrival_station}</strong>. Беру кезеңі: <strong>{fmt(contract.period_start)} – {fmt(contract.period_end)}</strong>.</p>
 
             <div className="font-bold text-center mt-4 mb-1 text-xs uppercase tracking-wide">2. Тараптардың құқықтары мен міндеттері</div>
             <p className="mb-1 text-xs"><strong>2.1. Орындаушы міндетті:</strong></p>
@@ -695,6 +766,25 @@ export function ContractView({ contract: initial, profile }: Props) {
                 <div>{contract.executor_company}</div>
                 <div className="text-gray-500">БСН: {contract.executor_bin}</div>
                 <div className="text-gray-500">{contract.executor_name}</div>
+                {contract.executor_signed_at ? (
+                  <>
+                    {contract.executor_phone && <div className="text-gray-500">Тел: {contract.executor_phone}</div>}
+                    {contract.executor_email && <div className="text-gray-500">Email: {contract.executor_email}</div>}
+                  </>
+                ) : isExecutor ? (
+                  <div className="mt-1 space-y-1">
+                    <IMaskInput mask="+7 (000) 000-00-00" value={phone} onAccept={(v: string) => setPhone(v)} lazy={false} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 bg-white" />
+                    <div>
+                      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} onBlur={() => setEmailTouched(true)} placeholder="example@company.kz" className={`w-full border rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 bg-white ${emailTouched && !emailValid ? 'border-red-400 focus:ring-red-300' : 'border-gray-300 focus:ring-blue-300'}`} />
+                      {emailTouched && !emailValid && <div className="text-[10px] text-red-500 mt-0.5">Дұрыс email енгізіңіз</div>}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-1 space-y-1">
+                    <div className="border border-dashed border-gray-300 rounded px-2 py-1 text-xs text-gray-400">Телефон</div>
+                    <div className="border border-dashed border-gray-300 rounded px-2 py-1 text-xs text-gray-400">Email</div>
+                  </div>
+                )}
                 <div className="mt-3 h-8 border-b border-dashed border-gray-300 flex items-end pb-0.5">
                   {contract.executor_signed_at && <span className="text-green-700 flex items-center gap-1"><Shield size={10} /> ЭЦҚ {fmt(contract.executor_signed_at)}</span>}
                 </div>
@@ -705,6 +795,25 @@ export function ContractView({ contract: initial, profile }: Props) {
                 <div>{contract.customer_company}</div>
                 <div className="text-gray-500">БСН: {contract.customer_bin}</div>
                 <div className="text-gray-500">{contract.customer_name}</div>
+                {contract.customer_signed_at ? (
+                  <>
+                    {contract.customer_phone && <div className="text-gray-500">Тел: {contract.customer_phone}</div>}
+                    {contract.customer_email && <div className="text-gray-500">Email: {contract.customer_email}</div>}
+                  </>
+                ) : isCustomer ? (
+                  <div className="mt-1 space-y-1">
+                    <IMaskInput mask="+7 (000) 000-00-00" value={phone} onAccept={(v: string) => setPhone(v)} lazy={false} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 bg-white" />
+                    <div>
+                      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} onBlur={() => setEmailTouched(true)} placeholder="example@company.kz" className={`w-full border rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 bg-white ${emailTouched && !emailValid ? 'border-red-400 focus:ring-red-300' : 'border-gray-300 focus:ring-blue-300'}`} />
+                      {emailTouched && !emailValid && <div className="text-[10px] text-red-500 mt-0.5">Дұрыс email енгізіңіз</div>}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-1 space-y-1">
+                    <div className="border border-dashed border-gray-300 rounded px-2 py-1 text-xs text-gray-400">Телефон</div>
+                    <div className="border border-dashed border-gray-300 rounded px-2 py-1 text-xs text-gray-400">Email</div>
+                  </div>
+                )}
                 <div className="mt-3 h-8 border-b border-dashed border-gray-300 flex items-end pb-0.5">
                   {contract.customer_signed_at && <span className="text-green-700 flex items-center gap-1"><Shield size={10} /> ЭЦҚ {fmt(contract.customer_signed_at)}</span>}
                 </div>
@@ -718,67 +827,32 @@ export function ContractView({ contract: initial, profile }: Props) {
 
       {/* Action */}
       {!bothSigned && (isExecutor || isCustomer) && (
-        <div className={`rounded-xl p-4 border ${mySigned ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
+        <div className={`flex items-center gap-3 px-4 py-2.5 rounded-xl border shrink-0 ${mySigned ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
           {mySigned ? (
-            <div className="flex items-center gap-2 text-sm font-medium text-green-800">
-              <CheckCircle size={16} /> Вы подписали договор. Ожидаем подпись другой стороны.
+            <div className="flex items-center gap-2 text-sm font-medium text-green-800 flex-1">
+              <CheckCircle size={15} /> {tc('awaitingOtherParty')}
             </div>
           ) : (
             <>
-              <div className="mb-3">
-                <div className="text-sm font-medium text-amber-800">Ознакомьтесь с договором и подпишите его ЭЦП</div>
-                <div className="text-xs mt-0.5 text-amber-600">
-                  {isExecutor ? 'Вы выступаете как Исполнитель (собственник вагонов)' : 'Вы выступаете как Заказчик (грузоотправитель)'}
-                </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-amber-800 leading-tight">{tc('awaitingYourSignature')}</div>
+                <div className="text-xs text-amber-600">{isExecutor ? tc('youAreExecutor') : tc('youAreCustomer')}</div>
               </div>
-
-              {/* Contact fields required before signing */}
-              <div className="grid grid-cols-2 gap-3 mb-3">
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1 flex items-center gap-1">
-                    <Phone size={11} /> Контактный телефон <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="tel"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="+7 (___) ___-__-__"
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1 flex items-center gap-1">
-                    <Mail size={11} /> Электронная почта <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="example@company.kz"
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white"
-                  />
-                </div>
-              </div>
-
-              {!canSign && (phone || email) && (
-                <div className="flex items-center gap-1.5 text-xs text-amber-700 mb-2">
-                  <AlertCircle size={12} /> Заполните телефон и email для подписания договора
+              {!canSign && (
+                <div className="flex items-center gap-1.5 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5 shrink-0">
+                  <AlertCircle size={12} />
+                  <span>{tc('fillContacts')}</span>
                 </div>
               )}
-
-              <div className="flex items-center justify-between">
-                <p className="text-xs text-gray-500">Поля отмечены * обязательны для подписания</p>
-                <Button onClick={sign} loading={signing} disabled={!canSign}>
-                  <Shield size={14} /> Подписать ЭЦП
-                </Button>
-              </div>
+              <Button size="sm" onClick={sign} loading={signing} disabled={!canSign}>
+                <Shield size={13} /> {tc('signEds')}
+              </Button>
             </>
           )}
-          {signError && (
-            <div className="mt-2 text-xs text-red-600 bg-red-100 rounded-lg px-3 py-2">{signError}</div>
-          )}
+          {signError && <div className="text-xs text-red-600">{signError}</div>}
         </div>
       )}
-    </div></div>
+    </div>
+    </div>
   );
 }

@@ -75,13 +75,9 @@ const ETSNG_WAGON_TYPES: Record<string, string[]> = {
   '511001': ['boxcar'],
 };
 
-/** Returns a warning string if code is unrecognised or name doesn't match */
-function validateEtsng(code?: string, name?: string): string | null {
+function validateEtsng(code?: string): string | null {
   if (!code) return null;
-  const known = KNOWN_ETSNG[code];
-  if (!known) return `Код ЕТСНГ ${code} не найден в справочнике`;
-  if (name && !name.toLowerCase().includes(known.split(' ')[0].toLowerCase()))
-    return `По справочнику: «${known}»`;
+  if (!KNOWN_ETSNG[code]) return `Код ЕТСНГ ${code} не найден в справочнике`;
   return null;
 }
 
@@ -112,14 +108,12 @@ const WAGON_TYPE_LABELS: Record<string, string> = {
 
 export interface ParsedGU12 {
   gu12_number?: string;
-  cargo_name?: string;
   cargo_etsng_code?: string;
   departure_esr_code?: string;
   departure_station_name?: string;
   arrival_esr_code?: string;
   arrival_station_name?: string;
   quantity_planned?: number;
-  wagon_type_required?: string;
   period_start?: string;
   period_end?: string;
 }
@@ -176,11 +170,6 @@ function parseGU12Text(text: string): ParsedGU12 {
     after(t, 'наименование груза', 'груз', 'cargo') ??
     firstMatch(t, /этснг[:\s]+\d+\s+([^\n\r]{2,50})/i); // sometimes after ETSNG code
 
-  // Strip trailing label keywords and numbers that bleed in
-  const cargo_name = cargoRaw
-    ?.replace(/\s*(Код|ЕТСНГ|ГНГ|ЕСР|\d{4,}).*$/i, '')
-    .trim();
-
   // ── ETSNG ───────────────────────────────────────────────────────────────────
   const cargo_etsng_code =
     firstMatch(t, /[эе]тснг[:\s]+(\d{5,6})/i) ??
@@ -215,9 +204,6 @@ function parseGU12Text(text: string): ParsedGU12 {
     firstMatch(t, /(\d{1,4})\s*(?:вагон|ваг\.)/i);
   const quantity_planned = qtyRaw ? parseInt(qtyRaw) : undefined;
 
-  // ── Wagon type ───────────────────────────────────────────────────────────────
-  const wagon_type_required = parseWagonType(t);
-
   // ── Dates ────────────────────────────────────────────────────────────────────
   // "Период с DD.MM.YYYY по DD.MM.YYYY" or "с ... по ..."
   const periodMatch = t.match(
@@ -230,14 +216,12 @@ function parseGU12Text(text: string): ParsedGU12 {
 
   return {
     gu12_number: gu12_number ?? undefined,
-    cargo_name: cargo_name || undefined,
     cargo_etsng_code: cargo_etsng_code ?? undefined,
     departure_station_name: departure_station_name || undefined,
     departure_esr_code: departure_esr_code ?? undefined,
     arrival_station_name: arrival_station_name || undefined,
     arrival_esr_code: arrival_esr_code ?? undefined,
     quantity_planned: Number.isFinite(quantity_planned) ? quantity_planned : undefined,
-    wagon_type_required: wagon_type_required ?? undefined,
     period_start,
     period_end,
   };
@@ -307,7 +291,7 @@ export function GU12PdfUpload({ shipperId, existingNumbers = [], onSaved }: Prop
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();
-      text += content.items.map((item: { str?: string }) => item.str ?? '').join(' ') + '\n';
+      text += content.items.map((item) => ('str' in item ? item.str ?? '' : '')).join(' ') + '\n';
     }
     return text;
   }
@@ -324,15 +308,11 @@ export function GU12PdfUpload({ shipperId, existingNumbers = [], onSaved }: Prop
     const { error } = await supabase.from('gu12_orders').upsert({
       shipper_id: shipperId,
       gu12_number,
-      cargo_name: parsed.cargo_name ?? null,
       cargo_etsng_code: parsed.cargo_etsng_code ?? null,
       departure_esr_code: parsed.departure_esr_code ?? null,
-      departure_station_name: parsed.departure_station_name ?? null,
       arrival_esr_code: parsed.arrival_esr_code ?? null,
-      arrival_station_name: parsed.arrival_station_name ?? null,
       quantity_planned: parsed.quantity_planned ?? 1,
       quantity_fulfilled: 0,
-      wagon_type_required: (parsed.cargo_etsng_code ? ETSNG_WAGON_TYPES[parsed.cargo_etsng_code]?.[0] : null) ?? parsed.wagon_type_required ?? null,
       period_start: parsed.period_start ?? null,
       period_end: parsed.period_end ?? null,
       status: 'active',
@@ -385,7 +365,7 @@ export function GU12PdfUpload({ shipperId, existingNumbers = [], onSaved }: Prop
           }
           // Check validation warnings before saving
           const warnings: string[] = [
-            validateEtsng(parsed.cargo_etsng_code, parsed.cargo_name),
+            validateEtsng(parsed.cargo_etsng_code),
             validateEsr(parsed.departure_esr_code, parsed.departure_station_name, 'ЕСР отпр.'),
             validateEsr(parsed.arrival_esr_code, parsed.arrival_station_name, 'ЕСР назн.'),
           ].filter(Boolean) as string[];
@@ -428,7 +408,7 @@ export function GU12PdfUpload({ shipperId, existingNumbers = [], onSaved }: Prop
   }
 
   const TRACKED_FIELDS: (keyof ParsedGU12)[] = [
-    'gu12_number', 'cargo_name', 'cargo_etsng_code',
+    'gu12_number', 'cargo_etsng_code',
     'departure_station_name', 'departure_esr_code',
     'arrival_station_name', 'arrival_esr_code',
     'quantity_planned', 'period_start', 'period_end',
@@ -554,7 +534,7 @@ export function GU12PdfUpload({ shipperId, existingNumbers = [], onSaved }: Prop
 
                         {/* Inline edit form */}
                         {r.status === 'warning' && reviewingIdx === i && (() => {
-                          const etsngWarn = validateEtsng(form.cargo_etsng_code, form.cargo_name);
+                          const etsngWarn = validateEtsng(form.cargo_etsng_code);
                           const depKnown  = form.departure_esr_code ? KNOWN_ESR[form.departure_esr_code] : null;
                           const depMismatch = depKnown && form.departure_station_name && !form.departure_station_name.toLowerCase().includes(depKnown.split('-')[0].toLowerCase());
                           const depNameCode = depMismatch ? findEsrByName(form.departure_station_name!) : null;
@@ -600,7 +580,6 @@ export function GU12PdfUpload({ shipperId, existingNumbers = [], onSaved }: Prop
                             <div className="grid grid-cols-2 gap-2">
                               {inlineField('№ ГУ-12', 'gu12_number', null)}
                               {inlineField('Кол-во вагонов', 'quantity_planned', null, 'number')}
-                              {inlineField('Наименование груза', 'cargo_name', etsngWarn)}
                               {inlineField('Код ЕТСНГ', 'cargo_etsng_code', etsngWarn)}
                               {inlineField('Станция отправления', 'departure_station_name', depWarnName)}
                               {inlineField('ЕСР отправления', 'departure_esr_code', depWarnCode)}
@@ -735,18 +714,15 @@ export function GU12PdfUpload({ shipperId, existingNumbers = [], onSaved }: Prop
                     {field('№ ГУ-12', 'gu12_number')}
                     {field('Количество вагонов', 'quantity_planned', 'number')}
                     {(() => {
-                      const w = validateEtsng(form.cargo_etsng_code, form.cargo_name);
+                      const w = validateEtsng(form.cargo_etsng_code);
                       const knownName = form.cargo_etsng_code ? KNOWN_ETSNG[form.cargo_etsng_code] : null;
                       const v = { warn: w, ok: !w && knownName ? `Проверено: ${knownName}` : null };
-                      return <>
-                        {field('Наименование груза', 'cargo_name', 'text', v)}
-                        {field('Код ЕТСНГ', 'cargo_etsng_code', 'text', v)}
-                      </>;
+                      return field('Код ЕТСНГ', 'cargo_etsng_code', 'text', v);
                     })()}
                     {(() => {
                       const knownSt = form.departure_esr_code ? KNOWN_ESR[form.departure_esr_code] : null;
                       const mismatch = knownSt && form.departure_station_name && !form.departure_station_name.toLowerCase().includes(knownSt.split('-')[0].toLowerCase());
-                      const nameCode = mismatch ? findEsrByName(form.departure_station_name) : null;
+                      const nameCode = mismatch ? findEsrByName(form.departure_station_name ?? '') : null;
                       const wName = mismatch ? `Не соответствует коду — по справочнику это «${knownSt}»` : null;
                       const wCode = mismatch ? `Код ${form.departure_esr_code} = «${knownSt}»${nameCode ? `, код «${form.departure_station_name}»: ${nameCode}` : ''}` : null;
                       const ok = !mismatch && knownSt ? `Проверено: ${knownSt}` : null;
@@ -758,7 +734,7 @@ export function GU12PdfUpload({ shipperId, existingNumbers = [], onSaved }: Prop
                     {(() => {
                       const knownSt = form.arrival_esr_code ? KNOWN_ESR[form.arrival_esr_code] : null;
                       const mismatch = knownSt && form.arrival_station_name && !form.arrival_station_name.toLowerCase().includes(knownSt.split('-')[0].toLowerCase());
-                      const nameCode = mismatch ? findEsrByName(form.arrival_station_name) : null;
+                      const nameCode = mismatch ? findEsrByName(form.arrival_station_name ?? '') : null;
                       const wName = mismatch ? `Не соответствует коду — по справочнику это «${knownSt}»` : null;
                       const wCode = mismatch ? `Код ${form.arrival_esr_code} = «${knownSt}»${nameCode ? `, код «${form.arrival_station_name}»: ${nameCode}` : ''}` : null;
                       const ok = !mismatch && knownSt ? `Проверено: ${knownSt}` : null;

@@ -13,7 +13,7 @@ export default async function MarketPage() {
   const [{ data: profile }, { data: orders }, { data: wagons }] = await Promise.all([
     supabase.from('profiles').select('*').eq('id', user.id).single(),
     supabase.from('gu12_orders')
-      .select('*, shipper:profiles!shipper_id(company_name, bin)')
+      .select('*, etsng_cargos(name,wagon_type_required), departure_station:esr_stations!departure_esr_code(name), arrival_station:esr_stations!arrival_esr_code(name), shipper:profiles!shipper_id(company_name, bin)')
       .eq('is_public', true)
       .eq('status', 'active')
       .order('created_at', { ascending: false }),

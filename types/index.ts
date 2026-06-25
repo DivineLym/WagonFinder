@@ -6,6 +6,7 @@ export type Role = 'shipper' | 'wagon_owner';
 export type VerificationStatus = 'pending' | 'verified' | 'rejected';
 export type WagonType = 'tank' | 'hopper' | 'flatcar' | 'boxcar' | 'gondola' | 'refrigerator';
 export type WagonStatus = 'active' | 'in_repair' | 'booked';
+export type WagonAvailabilityType = 'spot' | 'lease' | 'both';
 export type GU12Status = 'active' | 'partially_fulfilled' | 'fulfilled' | 'cancelled';
 export type PendingApplicationStatus = 'pending' | 'accepted';
 
@@ -20,6 +21,7 @@ export interface Profile {
   phone: string | null;
   verification_status: VerificationStatus;
   balance_kzt: number;
+  language?: 'ru' | 'kk' | 'en';
   created_at: string;
   updated_at: string;
 }
@@ -48,11 +50,13 @@ export interface Wagon {
   next_repair_date: string | null;
   remaining_mileage_km: number | null;
   status: WagonStatus;
+  availability_type: WagonAvailabilityType;
   current_esr_code: string | null;
   last_operation: string | null;
   last_tracked_at: string | null;
   created_at: string;
   updated_at: string;
+  contract_wagons?: { contract_id: string; contracts: { status: string } | null }[];
 }
 
 export interface GU12Order {
@@ -60,19 +64,19 @@ export interface GU12Order {
   shipper_id: string;
   gu12_number: string;
   cargo_etsng_code: string;
-  cargo_name: string | null;
   departure_esr_code: string;
   arrival_esr_code: string;
-  departure_station_name: string | null;
-  arrival_station_name: string | null;
   quantity_planned: number;
   quantity_fulfilled: number;
   period_start: string;
   period_end: string;
-  wagon_type_required: WagonType | null;
   status: GU12Status;
+  deal_type: 'spot' | 'lease';
   is_public: boolean;
   created_at: string;
+  etsng_cargos?: ETSNGCargo;
+  departure_station?: { name: string };
+  arrival_station?: { name: string };
 }
 
 export interface PendingApplication {
@@ -115,9 +119,22 @@ export interface RejectedApplication {
 }
 
 
+export interface ContractWagon {
+  id: string;
+  contract_id: string;
+  wagon_id: string | null;
+  wagon_number: string;
+  wagon_type: string;
+  application_id: string | null;
+  created_at: string;
+}
+
 export interface Contract {
   id: string;
-  application_id: string;
+  application_id: string | null;
+  gu12_order_id: string | null;
+  executor_id: string | null;
+  customer_id: string | null;
   contract_number: string;
   status: 'pending_payment' | 'pending_signature' | 'signed';
   executor_company: string;
@@ -126,8 +143,8 @@ export interface Contract {
   customer_company: string;
   customer_bin: string;
   customer_name: string;
-  wagon_number: string;
-  wagon_type: string;
+  wagon_number: string | null;
+  wagon_type: string | null;
   cargo_name: string;
   cargo_etsng: string;
   departure_station: string;
@@ -138,7 +155,13 @@ export interface Contract {
   customer_paid_at: string | null;
   executor_signed_at: string | null;
   customer_signed_at: string | null;
+  executor_phone: string | null;
+  executor_email: string | null;
+  customer_phone: string | null;
+  customer_email: string | null;
+  deal_type: 'spot' | 'lease';
   created_at: string;
+  contract_wagons?: ContractWagon[];
 }
 
 export interface ESRStation {
@@ -179,13 +202,9 @@ export interface KTZTrackingData {
 export interface KTZGu12Data {
   gu12_number: string;
   cargo_etsng_code: string;
-  cargo_name: string;
   departure_esr_code: string;
-  departure_station_name: string;
   arrival_esr_code: string;
-  arrival_station_name: string;
   quantity_planned: number;
   period_start: string;
   period_end: string;
-  wagon_type_required: WagonType;
 }

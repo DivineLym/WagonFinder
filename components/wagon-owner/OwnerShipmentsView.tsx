@@ -4,8 +4,9 @@ import { useState, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatDate } from '@/lib/utils';
 import { createClient } from '@/lib/supabase/client';
-import { ArrowRight, Clock, CheckCircle, XCircle, Inbox, Search } from 'lucide-react';
+import { ArrowRight, Clock, CheckCircle, XCircle, Inbox, Search, Shield } from 'lucide-react';
 import type { PendingApplication, RejectedApplication, ShipperRequest, Profile } from '@/types';
+import { useTranslations } from 'next-intl';
 
 const WAGON_TYPE_LABELS: Record<string, string> = {
   tank: 'Цистерна', hopper: 'Хоппер', flatcar: 'Платформа',
@@ -26,8 +27,8 @@ type PendingWithPayment = PendingApplication & {
   shipper_paid_at?: string | null;
   wagon?: { number?: string; wagon_type?: string; payload_capacity_tons?: number | null };
   gu12_order?: {
-    gu12_number?: string; cargo_name?: string; departure_esr_code?: string; arrival_esr_code?: string;
-    departure_station_name?: string; arrival_station_name?: string; period_start?: string; period_end?: string;
+    gu12_number?: string; etsng_cargos?: { name?: string }; departure_esr_code?: string; arrival_esr_code?: string;
+    departure_station?: { name?: string }; arrival_station?: { name?: string }; period_start?: string; period_end?: string;
     cargo_etsng_code?: string;
   };
 };
@@ -39,6 +40,7 @@ type ShipperRequestWithPayment = ShipperRequest & {
 };
 
 export function OwnerShipmentsView({ pending = [], rejected = [], shipperRequests = [], rejectedShipperRequests = [], profile }: Props) {
+  const tr = useTranslations('requests');
   const [subTab, setSubTab] = useState<'pending' | 'rejected'>('pending');
   const [pendingList, setPendingList] = useState<PendingWithPayment[]>(pending as PendingWithPayment[]);
   const [requests, setRequests] = useState<ShipperRequestWithPayment[]>(shipperRequests as ShipperRequestWithPayment[]);
@@ -52,9 +54,9 @@ export function OwnerShipmentsView({ pending = [], rejected = [], shipperRequest
     if (!filter.trim()) return pendingList;
     const q = filter.toLowerCase();
     return pendingList.filter((a) => {
-      const o = a.gu12_order as { gu12_number?: string; cargo_name?: string } | undefined;
+      const o = a.gu12_order as { gu12_number?: string; etsng_cargos?: { name?: string } } | undefined;
       const w = a.wagon as { number?: string } | undefined;
-      return o?.gu12_number?.toLowerCase().includes(q) || w?.number?.toLowerCase().includes(q) || o?.cargo_name?.toLowerCase().includes(q);
+      return o?.gu12_number?.toLowerCase().includes(q) || w?.number?.toLowerCase().includes(q) || o?.etsng_cargos?.name?.toLowerCase().includes(q);
     });
   }, [pendingList, filter]);
 
@@ -62,7 +64,7 @@ export function OwnerShipmentsView({ pending = [], rejected = [], shipperRequest
     if (!filter.trim()) return requests;
     const q = filter.toLowerCase();
     return requests.filter((r) => {
-      const o = r.gu12_order as { gu12_number?: string; cargo_name?: string } | undefined;
+      const o = r.gu12_order as { gu12_number?: string; etsng_cargos?: { name?: string } } | undefined;
       const w = r.wagon as { number?: string } | undefined;
       return o?.gu12_number?.toLowerCase().includes(q) || w?.number?.toLowerCase().includes(q);
     });
@@ -72,7 +74,7 @@ export function OwnerShipmentsView({ pending = [], rejected = [], shipperRequest
     if (!filter.trim()) return rejected;
     const q = filter.toLowerCase();
     return rejected.filter((a) => {
-      const o = a.gu12_order as { gu12_number?: string; cargo_name?: string } | undefined;
+      const o = a.gu12_order as { gu12_number?: string; etsng_cargos?: { name?: string } } | undefined;
       const w = a.wagon as { number?: string } | undefined;
       return o?.gu12_number?.toLowerCase().includes(q) || w?.number?.toLowerCase().includes(q);
     });
@@ -82,7 +84,7 @@ export function OwnerShipmentsView({ pending = [], rejected = [], shipperRequest
     if (!filter.trim()) return rejectedShipperRequests;
     const q = filter.toLowerCase();
     return rejectedShipperRequests.filter((r) => {
-      const o = r.gu12_order as { gu12_number?: string; cargo_name?: string } | undefined;
+      const o = r.gu12_order as { gu12_number?: string; etsng_cargos?: { name?: string } } | undefined;
       const w = r.wagon as { number?: string } | undefined;
       return o?.gu12_number?.toLowerCase().includes(q) || w?.number?.toLowerCase().includes(q);
     });
@@ -113,10 +115,10 @@ export function OwnerShipmentsView({ pending = [], rejected = [], shipperRequest
         customer_name: req.shipper?.full_name ?? '',
         wagon_number: req.wagon?.number ?? '',
         wagon_type: req.wagon?.wagon_type ?? '',
-        cargo_name: req.gu12_order?.cargo_name ?? '',
+        cargo_name: req.gu12_order?.etsng_cargos?.name ?? '',
         cargo_etsng: req.gu12_order?.cargo_etsng_code ?? '',
-        departure_station: req.gu12_order?.departure_station_name ?? req.gu12_order?.departure_esr_code ?? '',
-        arrival_station: req.gu12_order?.arrival_station_name ?? req.gu12_order?.arrival_esr_code ?? '',
+        departure_station: req.gu12_order?.departure_station?.name ?? req.gu12_order?.departure_esr_code ?? '',
+        arrival_station: req.gu12_order?.arrival_station?.name ?? req.gu12_order?.arrival_esr_code ?? '',
         period_start: req.gu12_order?.period_start ?? new Date().toISOString().slice(0,10),
         period_end: req.gu12_order?.period_end ?? new Date().toISOString().slice(0,10),
       });
@@ -151,8 +153,8 @@ export function OwnerShipmentsView({ pending = [], rejected = [], shipperRequest
   return (
     <div className="h-full flex flex-col gap-4 min-h-0">
       <div className="shrink-0">
-        <h2 className="text-lg font-semibold text-gray-900">Заявки</h2>
-        <p className="text-sm text-gray-500 mt-0.5">Поданные заявки и запросы от грузоотправителей</p>
+        <h2 className="text-lg font-semibold text-gray-900">{tr('title')}</h2>
+        <p className="text-sm text-gray-500 mt-0.5">{tr('outgoing')} / {tr('incoming')}</p>
       </div>
 
       {acceptError && (
@@ -189,69 +191,9 @@ export function OwnerShipmentsView({ pending = [], rejected = [], shipperRequest
 
       {subTab === 'pending' && (
         <div className="grid grid-rows-2 gap-4 flex-1 min-h-0">
-          {/* My outgoing pending applications */}
-          <div className="flex flex-col min-h-0">
-            <h3 className="text-sm font-semibold text-gray-600 mb-3 shrink-0">Мои поданные заявки</h3>
-            {filteredPending.length === 0 ? (
-              <div className="flex-1 min-h-0 flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-xl bg-white text-center">
-                <Inbox size={28} className="text-gray-300 mb-2" />
-                <p className="text-gray-500 text-sm">Нет ожидающих заявок</p>
-              </div>
-            ) : (
-              <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col flex-1 min-h-0">
-                <div className="overflow-auto flex-1 min-h-0">
-                  <table className="w-full text-sm">
-                    <thead className="sticky top-0 z-10">
-                      <tr className="border-b border-gray-100 bg-gray-50">
-                        {['Груз (ГУ-12)', 'Вагон', 'Маршрут', 'Период', 'Статус', 'Действие'].map((h) => (
-                          <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-50">
-                      {filteredPending.map((app) => {
-                        const order = app.gu12_order;
-                        const wagon = app.wagon;
-                        return (
-                          <tr key={app.id} className="hover:bg-gray-50 transition-colors">
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              <div className="font-mono text-xs text-blue-700 font-medium">{order?.gu12_number ?? '—'}</div>
-                              <div className="text-xs text-gray-500">{order?.cargo_name}</div>
-                            </td>
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              <div className="font-mono text-xs text-gray-800">{wagon?.number ?? '—'}</div>
-                              <div className="text-xs text-gray-400">{wagon?.wagon_type ? WAGON_TYPE_LABELS[wagon.wagon_type] : ''}</div>
-                            </td>
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              <div className="flex items-center gap-1 text-xs">
-                                <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">{order?.departure_esr_code}</span>
-                                <ArrowRight size={10} className="text-gray-400" />
-                                <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">{order?.arrival_esr_code}</span>
-                              </div>
-                              <div className="text-xs text-gray-400 mt-0.5">{order?.departure_station_name} → {order?.arrival_station_name}</div>
-                            </td>
-                            <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
-                              {order?.period_start && `${formatDate(order.period_start)} – ${formatDate(order.period_end ?? '')}`}
-                            </td>
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
-                                <Clock size={10} /> Ожидает принятия
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 whitespace-nowrap text-xs text-gray-400">—</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
-
           {/* Incoming shipper requests */}
           <div className="flex flex-col min-h-0">
-            <h3 className="text-sm font-semibold text-gray-600 mb-3 shrink-0">Входящие запросы от грузоотправителей</h3>
+            <h3 className="text-sm font-semibold text-gray-600 mb-3 shrink-0">{tr('incoming')}</h3>
             {filteredRequests.length === 0 ? (
               <div className="flex-1 min-h-0 flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-xl bg-white text-center">
                 <Inbox size={28} className="text-gray-300 mb-2" />
@@ -260,39 +202,48 @@ export function OwnerShipmentsView({ pending = [], rejected = [], shipperRequest
             ) : (
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col flex-1 min-h-0">
                 <div className="overflow-auto flex-1 min-h-0">
-                  <table className="w-full text-sm">
+                  <table className="w-full text-sm table-fixed">
+                    <colgroup>
+                      <col style={{width:'20%'}} /><col style={{width:'16%'}} /><col style={{width:'12%'}} />
+                      <col style={{width:'18%'}} /><col style={{width:'14%'}} /><col style={{width:'20%'}} />
+                    </colgroup>
                     <thead className="sticky top-0 z-10">
                       <tr className="border-b border-gray-100 bg-gray-50">
-                        {['Груз (ГУ-12)', 'Грузоотправитель', 'Вагон', 'Период', 'Статус', 'Действие'].map((h) => (
-                          <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                        {['Груз', 'Грузоотправитель', 'Вагон', 'Маршрут', 'Период', 'Действие'].map((h) => (
+                          <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50">
                       {filteredRequests.map((req) => {
-                        const order = req.gu12_order as { gu12_number?: string; cargo_name?: string; departure_esr_code?: string; arrival_esr_code?: string; departure_station_name?: string; arrival_station_name?: string; period_start?: string; period_end?: string } | undefined;
+                        const order = req.gu12_order as { gu12_number?: string; etsng_cargos?: { name?: string }; departure_esr_code?: string; arrival_esr_code?: string; departure_station?: { name?: string }; arrival_station?: { name?: string }; period_start?: string; period_end?: string } | undefined;
                         const wagon = req.wagon as { number?: string; wagon_type?: string } | undefined;
                         return (
                           <tr key={req.id} className="hover:bg-gray-50 transition-colors">
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              <div className="font-mono text-xs text-blue-700 font-medium">{order?.gu12_number ?? '—'}</div>
-                              <div className="text-xs text-gray-500">{order?.cargo_name}</div>
+                            <td className="px-4 py-3">
+                              <div className="text-xs font-medium text-gray-800 truncate">{order?.etsng_cargos?.name ?? '—'}</div>
                             </td>
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              <div className="font-medium text-gray-900 text-xs">{req.shipper?.company_name ?? req.shipper?.full_name ?? '—'}</div>
-                              <div className="text-xs text-gray-400">БИН {req.shipper?.bin ?? '—'}</div>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center gap-1 text-xs text-gray-400 italic"><Shield size={11} className="shrink-0" /> Скрыто до оплаты</div>
                             </td>
-                            <td className="px-4 py-3 whitespace-nowrap">
+                            <td className="px-4 py-3">
                               <div className="font-mono text-xs text-gray-800">{wagon?.number ?? '—'}</div>
                               <div className="text-xs text-gray-400">{wagon?.wagon_type ? WAGON_TYPE_LABELS[wagon.wagon_type] : ''}</div>
                             </td>
-                            <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
-                              {order?.period_start && `${formatDate(order.period_start)} – ${formatDate(order.period_end ?? '')}`}
+                            <td className="px-4 py-3">
+                              {order?.departure_esr_code ? (
+                                <>
+                                  <div className="flex items-center gap-1 text-xs">
+                                    <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">{order.departure_esr_code}</span>
+                                    <ArrowRight size={10} className="text-gray-400 shrink-0" />
+                                    <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">{order.arrival_esr_code}</span>
+                                  </div>
+                                  <div className="text-xs text-gray-400 mt-0.5 truncate">{order.departure_station?.name} → {order.arrival_station?.name}</div>
+                                </>
+                              ) : <span className="text-gray-300 text-xs">—</span>}
                             </td>
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
-                                <Clock size={10} /> Ожидает принятия
-                              </span>
+                            <td className="px-4 py-3 text-xs text-gray-500">
+                              {order?.period_start && `${formatDate(order.period_start)} – ${formatDate(order.period_end ?? '')}`}
                             </td>
                             <td className="px-4 py-3">
                               <div className="flex gap-1.5">
@@ -305,6 +256,71 @@ export function OwnerShipmentsView({ pending = [], rejected = [], shipperRequest
                                   <XCircle size={12} /> Отклонить
                                 </button>
                               </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* My outgoing pending applications */}
+          <div className="flex flex-col min-h-0">
+            <h3 className="text-sm font-semibold text-gray-600 mb-3 shrink-0">Мои поданные заявки</h3>
+            {filteredPending.length === 0 ? (
+              <div className="flex-1 min-h-0 flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-xl bg-white text-center">
+                <Inbox size={28} className="text-gray-300 mb-2" />
+                <p className="text-gray-500 text-sm">Нет ожидающих заявок</p>
+              </div>
+            ) : (
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col flex-1 min-h-0">
+                <div className="overflow-auto flex-1 min-h-0">
+                  <table className="w-full text-sm table-fixed">
+                    <colgroup>
+                      <col style={{width:'20%'}} /><col style={{width:'16%'}} /><col style={{width:'12%'}} />
+                      <col style={{width:'18%'}} /><col style={{width:'14%'}} /><col style={{width:'20%'}} />
+                    </colgroup>
+                    <thead className="sticky top-0 z-10">
+                      <tr className="border-b border-gray-100 bg-gray-50">
+                        {['Груз', 'Грузоотправитель', 'Вагон', 'Маршрут', 'Период', 'Действие'].map((h) => (
+                          <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {filteredPending.map((app) => {
+                        const order = app.gu12_order;
+                        const wagon = app.wagon;
+                        return (
+                          <tr key={app.id} className="hover:bg-gray-50 transition-colors">
+                            <td className="px-4 py-3">
+                              <div className="text-xs font-medium text-gray-800 truncate">{order?.etsng_cargos?.name ?? '—'}</div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center gap-1 text-xs text-gray-400 italic"><Shield size={11} className="shrink-0" /> Скрыто до оплаты</div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="font-mono text-xs text-gray-800">{wagon?.number ?? '—'}</div>
+                              <div className="text-xs text-gray-400">{wagon?.wagon_type ? WAGON_TYPE_LABELS[wagon.wagon_type] : ''}</div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center gap-1 text-xs">
+                                <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">{order?.departure_esr_code}</span>
+                                <ArrowRight size={10} className="text-gray-400 shrink-0" />
+                                <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">{order?.arrival_esr_code}</span>
+                              </div>
+                              <div className="text-xs text-gray-400 mt-0.5 truncate">{order?.departure_station?.name} → {order?.arrival_station?.name}</div>
+                            </td>
+                            <td className="px-4 py-3 text-xs text-gray-500">
+                              {order?.period_start && `${formatDate(order.period_start)} – ${formatDate(order.period_end ?? '')}`}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className="inline-flex items-center gap-1 text-xs text-amber-600">
+                                <Clock size={11} /> Ожидает принятия грузоотправителем
+                              </span>
                             </td>
                           </tr>
                         );
@@ -344,13 +360,13 @@ export function OwnerShipmentsView({ pending = [], rejected = [], shipperRequest
                     </thead>
                     <tbody className="divide-y divide-gray-50">
                       {filteredRejected.map((app) => {
-                        const order = app.gu12_order as { gu12_number?: string; cargo_name?: string; departure_esr_code?: string; arrival_esr_code?: string; departure_station_name?: string; arrival_station_name?: string; } | undefined;
+                        const order = app.gu12_order as { gu12_number?: string; etsng_cargos?: { name?: string }; departure_esr_code?: string; arrival_esr_code?: string; departure_station?: { name?: string }; arrival_station?: { name?: string }; } | undefined;
                         const wagon = app.wagon as { number?: string; wagon_type?: string } | undefined;
                         return (
                           <tr key={app.id} className="hover:bg-gray-50 transition-colors">
                             <td className="px-4 py-3 whitespace-nowrap">
                               <div className="font-mono text-xs text-blue-700 font-medium">{order?.gu12_number ?? '—'}</div>
-                              <div className="text-xs text-gray-500">{order?.cargo_name}</div>
+                              <div className="text-xs text-gray-500">{order?.etsng_cargos?.name}</div>
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               <div className="font-mono text-xs text-gray-800">{wagon?.number ?? '—'}</div>
@@ -362,7 +378,7 @@ export function OwnerShipmentsView({ pending = [], rejected = [], shipperRequest
                                 <ArrowRight size={10} className="text-gray-400" />
                                 <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">{order?.arrival_esr_code}</span>
                               </div>
-                              <div className="text-xs text-gray-400 mt-0.5">{order?.departure_station_name} → {order?.arrival_station_name}</div>
+                              <div className="text-xs text-gray-400 mt-0.5">{order?.departure_station?.name} → {order?.arrival_station?.name}</div>
                             </td>
                             <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{formatDate(app.created_at)}</td>
                             <td className="px-4 py-3 text-xs text-gray-500">
@@ -402,17 +418,16 @@ export function OwnerShipmentsView({ pending = [], rejected = [], shipperRequest
                     </thead>
                     <tbody className="divide-y divide-gray-50">
                       {filteredRejectedShipper.map((req) => {
-                        const order = req.gu12_order as { gu12_number?: string; cargo_name?: string; departure_esr_code?: string; arrival_esr_code?: string; departure_station_name?: string; arrival_station_name?: string; } | undefined;
+                        const order = req.gu12_order as { gu12_number?: string; etsng_cargos?: { name?: string }; departure_esr_code?: string; arrival_esr_code?: string; departure_station?: { name?: string }; arrival_station?: { name?: string }; } | undefined;
                         const wagon = req.wagon as { number?: string; wagon_type?: string } | undefined;
                         return (
                           <tr key={req.id} className="hover:bg-gray-50 transition-colors">
                             <td className="px-4 py-3 whitespace-nowrap">
                               <div className="font-mono text-xs text-blue-700 font-medium">{order?.gu12_number ?? '—'}</div>
-                              <div className="text-xs text-gray-500">{order?.cargo_name}</div>
+                              <div className="text-xs text-gray-500">{order?.etsng_cargos?.name}</div>
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap">
-                              <div className="font-medium text-gray-900 text-xs">{req.shipper?.company_name ?? req.shipper?.full_name ?? '—'}</div>
-                              <div className="text-xs text-gray-400">БИН {req.shipper?.bin ?? '—'}</div>
+                              <div className="flex items-center gap-1 text-xs text-gray-400 italic"><Shield size={11} /> Скрыто до оплаты</div>
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               <div className="font-mono text-xs text-gray-800">{wagon?.number ?? '—'}</div>
@@ -424,7 +439,7 @@ export function OwnerShipmentsView({ pending = [], rejected = [], shipperRequest
                                 <ArrowRight size={10} className="text-gray-400" />
                                 <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">{order?.arrival_esr_code}</span>
                               </div>
-                              <div className="text-xs text-gray-400 mt-0.5">{order?.departure_station_name} → {order?.arrival_station_name}</div>
+                              <div className="text-xs text-gray-400 mt-0.5">{order?.departure_station?.name} → {order?.arrival_station?.name}</div>
                             </td>
                             <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{formatDate(req.created_at)}</td>
                           </tr>

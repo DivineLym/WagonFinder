@@ -7,18 +7,38 @@ import { useRouter } from 'next/navigation';
 import type { Profile } from '@/types';
 import {
   Train, Package, ClipboardList,
-  LayoutDashboard, Settings, HeadphonesIcon,
-  LogOut, ChevronDown, User, Store, Map, Wallet,
+  LayoutDashboard,
+  LogOut, ChevronDown, User, Store, Map, Wallet, Globe,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useTranslations } from 'next-intl';
+import { setLocale } from '@/app/actions/setLocale';
 
 interface SidebarProps { profile: Profile; }
+
+const LANGS = [
+  { code: 'ru', label: 'RU' },
+  { code: 'kk', label: 'KZ' },
+  { code: 'en', label: 'EN' },
+];
 
 export function Sidebar({ profile }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const t = useTranslations();
+  const tp = useTranslations('profile');
   const isShipper = profile.role === 'shipper';
   const [railOpen, setRailOpen] = useState(true);
+
+  // Sync profile language to cookie on first load (new device / cleared cookies)
+  useEffect(() => {
+    const profileLang = profile.language ?? 'ru';
+    const cookieLang = document.cookie.split(';').find(c => c.trim().startsWith('locale='))?.split('=')[1];
+    if (cookieLang !== profileLang) {
+      setLocale(profileLang).then(() => router.refresh());
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function signOut() {
     const supabase = createClient();
@@ -27,38 +47,44 @@ export function Sidebar({ profile }: SidebarProps) {
     router.refresh();
   }
 
+  async function switchLang(code: string) {
+    await setLocale(code);
+    router.refresh();
+  }
+
   const railItems = isShipper
     ? [
-        { href: '/shipper',              label: 'Мои грузы (ГУ-12)', icon: Package        },
-        { href: '/shipper/wagons',       label: 'Подбор вагонов',    icon: Train          },
-        { href: '/shipper/shipments',    label: 'Заявки',            icon: ClipboardList  },
-        { href: '/shipper/contracts',    label: 'Договора',          icon: LayoutDashboard },
+        { href: '/shipper',           label: t('nav.myGoods'),    icon: Package        },
+        { href: '/shipper/wagons',    label: t('nav.wagonSearch'), icon: Train         },
+        { href: '/shipper/shipments', label: t('nav.requests'),   icon: ClipboardList  },
+        { href: '/shipper/contracts', label: t('nav.contracts'),  icon: LayoutDashboard },
       ]
     : [
-        { href: '/wagon-owner',              label: 'Мой парк',     icon: Train           },
-        { href: '/wagon-owner/map',          label: 'Карта вагонов', icon: Map            },
-        { href: '/wagon-owner/market',       label: 'Биржа грузов', icon: Store           },
-        { href: '/wagon-owner/shipments',    label: 'Заявки',       icon: ClipboardList   },
-        { href: '/wagon-owner/contracts',    label: 'Договора',     icon: LayoutDashboard },
+        { href: '/wagon-owner',              label: t('nav.myFleet'),     icon: Train           },
+        { href: '/wagon-owner/map',          label: t('nav.wagonMap'),    icon: Map             },
+        { href: '/wagon-owner/market',       label: t('nav.cargoMarket'), icon: Store           },
+        { href: '/wagon-owner/shipments',    label: t('nav.requests'),    icon: ClipboardList   },
+        { href: '/wagon-owner/contracts',    label: t('nav.contracts'),   icon: LayoutDashboard },
       ];
 
   return (
     <aside className="w-[240px] shrink-0 h-screen bg-white border-r border-gray-200 flex flex-col select-none">
-      {/* Logo — matches SmartCargo header style */}
+      {/* Logo */}
       <div className="flex items-center gap-3 px-4 py-[14px] border-b border-gray-100">
         <div className="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
           <Train size={18} className="text-white" />
         </div>
         <div className="leading-tight">
           <div className="text-[13px] font-bold text-gray-900">Ж/Д перевозки</div>
-          <div className="text-[11px] text-gray-400">Smart Cargo</div>
+          <div className="text-[11px] text-gray-400">{profile.company_name || 'Smart Cargo'}</div>
+          <span className={`inline-block text-[9px] font-medium px-1.5 py-0.5 rounded-full mt-0.5 ${profile.role === 'wagon_owner' ? 'bg-blue-100 text-blue-600' : 'bg-green-100 text-green-600'}`}>
+            {profile.role === 'wagon_owner' ? tp('wagonOwner') : tp('shipper')}
+          </span>
         </div>
       </div>
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto py-2 px-2">
-
-        {/* Railway section — expanded */}
         <button
           onClick={() => setRailOpen((v) => !v)}
           className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
@@ -91,14 +117,10 @@ export function Sidebar({ profile }: SidebarProps) {
           </ul>
         )}
 
-        {/* Divider */}
         <div className="my-2 border-t border-gray-100" />
 
-        {/* Other platform sections */}
         {[
-          { label: 'Профиль',   icon: User,           href: '/profile' },
-          { label: 'Поддержка', icon: HeadphonesIcon, href: '#' },
-          { label: 'Настройки', icon: Settings,        href: '#' },
+          { label: t('nav.profile'),  icon: User, href: '/profile' },
         ].map(({ label, icon: Icon, href }) => {
           const active = pathname === href;
           return (
@@ -112,11 +134,31 @@ export function Sidebar({ profile }: SidebarProps) {
             </Link>
           );
         })}
+
       </nav>
 
       {/* Bottom user block */}
       <div className="border-t border-gray-100 p-3 space-y-1">
-        {/* Balance chip */}
+        {/* Language switcher */}
+        <div className="flex items-center gap-1.5 px-1 mb-1">
+          <Globe size={12} className="text-gray-400 shrink-0" />
+          <div className="flex gap-0.5">
+            {LANGS.map(({ code, label }) => {
+              const active = (profile.language ?? 'ru') === code;
+              return (
+                <button
+                  key={code}
+                  onClick={() => switchLang(code)}
+                  className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                    active ? 'text-blue-600 font-semibold' : 'text-gray-400 hover:text-gray-600'
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <Link href="/profile"
           className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
             profile.balance_kzt < 5000
@@ -129,7 +171,7 @@ export function Sidebar({ profile }: SidebarProps) {
             {profile.balance_kzt.toLocaleString('ru-KZ')} ₸
           </span>
           {profile.balance_kzt < 5000 && (
-            <span className="text-[10px] text-red-500 font-medium">Пополнить</span>
+            <span className="text-[10px] text-red-500 font-medium">{t('profile.topUp')}</span>
           )}
         </Link>
 
@@ -145,7 +187,7 @@ export function Sidebar({ profile }: SidebarProps) {
         <button onClick={signOut}
           className="flex items-center gap-2 px-3 py-1.5 w-full rounded-lg text-[12px] text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors cursor-pointer"
         >
-          <LogOut size={12} /> Выход
+          <LogOut size={12} /> {t('nav.logout')}
         </button>
       </div>
     </aside>

@@ -137,15 +137,11 @@ export async function fetchGU12(payerCode: string): Promise<KTZGu12Data[]> {
     return {
       gu12_number: `ГУ12-${payerCode}-${String(i + 1).padStart(3, '0')}`,
       cargo_etsng_code: etsngCode,
-      cargo_name: cargo.name,
       departure_esr_code: depCode,
-      departure_station_name: ESR_STATIONS[depCode],
       arrival_esr_code: arrCode,
-      arrival_station_name: ESR_STATIONS[arrCode],
       quantity_planned: 5 + Math.floor(Math.random() * 20),
       period_start: periodStart,
       period_end: periodEnd,
-      wagon_type_required: cargo.type,
     };
   });
 }

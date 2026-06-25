@@ -22,7 +22,7 @@ export default async function ShipperShipmentsPage() {
     orderIds.length > 0
       ? supabase
           .from('wagon_owner_pending_requests')
-          .select('*, gu12_order:gu12_orders(*), wagon:wagons(number,wagon_type,payload_capacity_tons), wagon_owner:profiles!wagon_owner_id(company_name,full_name,bin), status, wagon_owner_paid_at, shipper_paid_at')
+          .select('*, gu12_order:gu12_orders(*, etsng_cargos(name,wagon_type_required), departure_station:esr_stations!departure_esr_code(name), arrival_station:esr_stations!arrival_esr_code(name)), wagon:wagons(number,wagon_type,payload_capacity_tons), wagon_owner:profiles!wagon_owner_id(company_name,full_name,bin), status, wagon_owner_paid_at, shipper_paid_at')
           .in('gu12_order_id', orderIds)
           .order('created_at', { ascending: false })
       : Promise.resolve({ data: [] }),
@@ -30,20 +30,20 @@ export default async function ShipperShipmentsPage() {
     orderIds.length > 0
       ? supabase
           .from('wagon_owner_rejected_requests')
-          .select('*, gu12_order:gu12_orders(*), wagon:wagons(number,wagon_type,payload_capacity_tons), wagon_owner:profiles!wagon_owner_id(company_name,full_name,bin)')
+          .select('*, gu12_order:gu12_orders(*, etsng_cargos(name,wagon_type_required), departure_station:esr_stations!departure_esr_code(name), arrival_station:esr_stations!arrival_esr_code(name)), wagon:wagons(number,wagon_type,payload_capacity_tons), wagon_owner:profiles!wagon_owner_id(company_name,full_name,bin)')
           .in('gu12_order_id', orderIds)
           .order('created_at', { ascending: false })
       : Promise.resolve({ data: [] }),
     // Outgoing: shipper's own requests to wagon owners
     supabase
       .from('shipper_pending_requests')
-      .select('*, gu12_order:gu12_orders(*), wagon:wagons(number,wagon_type,payload_capacity_tons), wagon_owner:profiles!wagon_owner_id(company_name,full_name,bin), status, shipper_paid_at, wagon_owner_paid_at')
+      .select('*, gu12_order:gu12_orders(*, etsng_cargos(name,wagon_type_required), departure_station:esr_stations!departure_esr_code(name), arrival_station:esr_stations!arrival_esr_code(name)), wagon:wagons(number,wagon_type,payload_capacity_tons), wagon_owner:profiles!wagon_owner_id(company_name,full_name,bin), status, shipper_paid_at, wagon_owner_paid_at')
       .eq('shipper_id', user.id)
       .order('created_at', { ascending: false }),
     // Rejected outgoing
     supabase
       .from('shipper_rejected_requests')
-      .select('*, gu12_order:gu12_orders(*), wagon:wagons(number,wagon_type,payload_capacity_tons), wagon_owner:profiles!wagon_owner_id(company_name,full_name,bin)')
+      .select('*, gu12_order:gu12_orders(*, etsng_cargos(name,wagon_type_required), departure_station:esr_stations!departure_esr_code(name), arrival_station:esr_stations!arrival_esr_code(name)), wagon:wagons(number,wagon_type,payload_capacity_tons), wagon_owner:profiles!wagon_owner_id(company_name,full_name,bin)')
       .eq('shipper_id', user.id)
       .order('created_at', { ascending: false }),
   ]);

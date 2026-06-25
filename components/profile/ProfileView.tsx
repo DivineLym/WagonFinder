@@ -4,8 +4,9 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import type { Profile, BalanceTransaction } from '@/types';
-import { Wallet, Plus, ArrowDownLeft, ArrowUpRight, RotateCcw, CheckCircle, AlertCircle, CreditCard, Lock, ChevronLeft } from 'lucide-react';
+import { Wallet, Plus, ArrowDownLeft, ArrowUpRight, RotateCcw, CheckCircle, AlertCircle, CreditCard, Lock, ChevronLeft, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useTranslations } from 'next-intl';
 
 const COMMISSION_KZT = 5_000;
 const TOP_UP_PRESETS = [10_000, 25_000, 50_000, 100_000];
@@ -24,12 +25,6 @@ const TX_ICONS = {
   refund:     <RotateCcw size={14} className="text-blue-500" />,
 };
 
-const TX_LABELS = {
-  top_up:     'Пополнение',
-  commission: 'Комиссия',
-  refund:     'Возврат',
-};
-
 interface Props {
   profile: Profile;
   transactions: BalanceTransaction[];
@@ -37,6 +32,8 @@ interface Props {
 
 export function ProfileView({ profile, transactions: initialTx }: Props) {
   const router = useRouter();
+  const t = useTranslations('profile');
+  const tc = useTranslations('common');
   const [balance, setBalance] = useState(profile.balance_kzt);
   const [transactions, setTransactions] = useState(initialTx);
   const [showTopUp, setShowTopUp] = useState(false);
@@ -48,6 +45,18 @@ export function ProfileView({ profile, transactions: initialTx }: Props) {
   const [cardName, setCardName] = useState('');
   const [topping, startTopUp] = useTransition();
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [editingPhone, setEditingPhone] = useState(false);
+  const [phoneValue, setPhoneValue] = useState(profile.phone ?? '');
+  const [savingPhone, setSavingPhone] = useState(false);
+
+  async function savePhone() {
+    setSavingPhone(true);
+    const supabase = createClient();
+    await supabase.from('profiles').update({ phone: phoneValue }).eq('id', profile.id);
+    setSavingPhone(false);
+    setEditingPhone(false);
+    router.refresh();
+  }
 
   function openTopUp() { setAmount(''); setMsg(null); setStep('amount'); setShowTopUp(true); }
   function closeTopUp() { setShowTopUp(false); setMsg(null); setStep('amount'); setCardNumber(''); setCardExpiry(''); setCardCvv(''); setCardName(''); }
@@ -75,7 +84,6 @@ export function ProfileView({ profile, transactions: initialTx }: Props) {
     if (!cardCvv || cardCvv.length < 3) { setMsg({ type: 'err', text: 'Введите CVV' }); return; }
     setMsg(null);
     startTopUp(async () => {
-      // Simulate processing delay
       await new Promise((r) => setTimeout(r, 1200));
       const supabase = createClient();
       const { error } = await supabase.rpc('topup_balance', {
@@ -89,7 +97,7 @@ export function ProfileView({ profile, transactions: initialTx }: Props) {
         .from('balance_transactions').select('*').eq('profile_id', profile.id)
         .order('created_at', { ascending: false }).limit(50);
       if (tx) setTransactions(tx as BalanceTransaction[]);
-      setMsg({ type: 'ok', text: `Баланс пополнен на ${fmtKzt(kzt)}` });
+      setMsg({ type: 'ok', text: `${t('balance')} +${fmtKzt(kzt)}` });
       router.refresh();
       setTimeout(closeTopUp, 1500);
     });
@@ -99,7 +107,7 @@ export function ProfileView({ profile, transactions: initialTx }: Props) {
 
   return (
     <div className="max-w-2xl mx-auto space-y-5 pb-8">
-      <h2 className="text-lg font-semibold text-gray-900">Профиль и баланс</h2>
+      <h2 className="text-lg font-semibold text-gray-900">{t('title')}</h2>
 
       {/* Profile card */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-3">
@@ -110,14 +118,38 @@ export function ProfileView({ profile, transactions: initialTx }: Props) {
           <div>
             <div className="font-semibold text-gray-900">{profile.full_name}</div>
             <div className="text-sm text-gray-500">{profile.email}</div>
-            <div className="text-xs text-gray-400 mt-0.5">{profile.role === 'shipper' ? 'Грузоотправитель' : 'Собственник вагонов'}</div>
+            <div className="text-xs text-gray-400 mt-0.5">{profile.role === 'shipper' ? t('shipper') : t('wagonOwner')}</div>
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3 pt-2 border-t border-gray-100 text-sm">
-          <div><span className="text-gray-400 text-xs">Компания</span><div className="text-gray-800 font-medium">{profile.company_name || '—'}</div></div>
-          <div><span className="text-gray-400 text-xs">БИН</span><div className="font-mono text-gray-800">{profile.bin || '—'}</div></div>
-          <div><span className="text-gray-400 text-xs">Телефон</span><div className="text-gray-800">{profile.phone || '—'}</div></div>
-          <div><span className="text-gray-400 text-xs">Код плательщика КТЖ</span><div className="font-mono text-gray-800">{profile.ktz_payer_code || '—'}</div></div>
+          <div><span className="text-gray-400 text-xs">{t('company')}</span><div className="text-gray-800 font-medium">{profile.company_name || '—'}</div></div>
+          <div><span className="text-gray-400 text-xs">{t('bin')}</span><div className="font-mono text-gray-800">{profile.bin || '—'}</div></div>
+          <div>
+            <span className="text-gray-400 text-xs">{t('phone')}</span>
+            {editingPhone ? (
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <input
+                  type="tel"
+                  value={phoneValue}
+                  onChange={(e) => setPhoneValue(e.target.value)}
+                  placeholder="+7 (___) ___-__-__"
+                  className="border border-gray-300 rounded px-2 py-0.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-300 w-40"
+                  autoFocus
+                  onKeyDown={(e) => { if (e.key === 'Enter') savePhone(); if (e.key === 'Escape') setEditingPhone(false); }}
+                />
+                <Button size="sm" onClick={savePhone} loading={savingPhone}>{tc('save')}</Button>
+                <button onClick={() => setEditingPhone(false)} className="text-xs text-gray-400 hover:text-gray-600 cursor-pointer">{tc('cancel')}</button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                {profile.phone
+                  ? <><span className="text-gray-800">{profile.phone}</span><button onClick={() => setEditingPhone(true)} className="text-gray-400 hover:text-gray-600 cursor-pointer"><Pencil size={12} /></button></>
+                  : <button onClick={() => setEditingPhone(true)} className="text-blue-500 hover:text-blue-700 text-sm flex items-center gap-1 cursor-pointer"><Plus size={13} />{t('addPhone')}</button>
+                }
+              </div>
+            )}
+          </div>
+          <div><span className="text-gray-400 text-xs">{t('payerCode')}</span><div className="font-mono text-gray-800">{profile.ktz_payer_code || '—'}</div></div>
         </div>
       </div>
 
@@ -126,10 +158,10 @@ export function ProfileView({ profile, transactions: initialTx }: Props) {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Wallet size={18} className={low ? 'text-amber-500' : 'text-blue-600'} />
-            <span className="font-semibold text-gray-700">Баланс платформы</span>
+            <span className="font-semibold text-gray-700">{t('balancePlatform')}</span>
           </div>
-          <Button size="sm" variant={low ? 'default' : 'secondary'} onClick={openTopUp}>
-            <Plus size={13} /> Внести средства
+          <Button size="sm" variant={low ? 'primary' : 'secondary'} onClick={openTopUp}>
+            <Plus size={13} /> {t('topUp')}
           </Button>
         </div>
 
@@ -140,12 +172,12 @@ export function ProfileView({ profile, transactions: initialTx }: Props) {
         {low && (
           <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-700">
             <AlertCircle size={12} />
-            Недостаточно для оплаты комиссии ({fmtKzt(COMMISSION_KZT)} за подписание договора). Пополните баланс.
+            {t('insufficientHint', { amount: fmtKzt(COMMISSION_KZT) })}
           </div>
         )}
         {!low && (
           <div className="mt-2 text-xs text-gray-400">
-            Комиссия платформы: {fmtKzt(COMMISSION_KZT)} за каждое подписание договора
+            {t('commissionNote', { amount: fmtKzt(COMMISSION_KZT) })}
           </div>
         )}
       </div>
@@ -153,11 +185,11 @@ export function ProfileView({ profile, transactions: initialTx }: Props) {
       {/* Transaction history */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
-          <span className="font-semibold text-sm text-gray-700">История операций</span>
-          <span className="text-xs text-gray-400">{transactions.length} записей</span>
+          <span className="font-semibold text-sm text-gray-700">{t('history')}</span>
+          <span className="text-xs text-gray-400">{transactions.length} {t('transactions')}</span>
         </div>
         {transactions.length === 0 ? (
-          <div className="text-center py-10 text-gray-400 text-sm">Операций пока нет</div>
+          <div className="text-center py-10 text-gray-400 text-sm">{t('noTransactions')}</div>
         ) : (
           <div className="divide-y divide-gray-50">
             {transactions.map((tx) => (
@@ -166,7 +198,7 @@ export function ProfileView({ profile, transactions: initialTx }: Props) {
                   {TX_ICONS[tx.type]}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm text-gray-800 font-medium">{tx.description ?? TX_LABELS[tx.type]}</div>
+                  <div className="text-sm text-gray-800 font-medium">{t(`tx_${tx.type}` as Parameters<typeof t>[0])}</div>
                   <div className="text-xs text-gray-400">{fmtDate(tx.created_at)}</div>
                 </div>
                 <div className={`text-sm font-semibold tabular-nums ${tx.amount_kzt > 0 ? 'text-green-600' : 'text-red-500'}`}>
@@ -186,7 +218,7 @@ export function ProfileView({ profile, transactions: initialTx }: Props) {
             {step === 'amount' ? <>
               <div className="flex items-center gap-2">
                 <Wallet size={18} className="text-blue-600" />
-                <h3 className="font-semibold text-gray-900">Пополнить баланс</h3>
+                <h3 className="font-semibold text-gray-900">{t('topUp')}</h3>
               </div>
 
               <div className="flex gap-2 flex-wrap">
@@ -200,10 +232,10 @@ export function ProfileView({ profile, transactions: initialTx }: Props) {
               </div>
 
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Сумма, ₸</label>
+                <label className="block text-xs text-gray-500 mb-1">{t('topUpAmount')}, ₸</label>
                 <input type="number" min={1000} step={1000} value={amount}
                   onChange={(e) => { setAmount(e.target.value); setMsg(null); }}
-                  placeholder="Введите сумму"
+                  placeholder={t('topUpAmount')}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
                 />
               </div>
@@ -216,12 +248,11 @@ export function ProfileView({ profile, transactions: initialTx }: Props) {
 
               <div className="flex gap-2 pt-1">
                 <Button className="flex-1" onClick={goToCard} disabled={!amount}>
-                  Далее — ввести карту
+                  {tc('next')}
                 </Button>
-                <Button variant="secondary" onClick={closeTopUp}>Отмена</Button>
+                <Button variant="secondary" onClick={closeTopUp}>{tc('cancel')}</Button>
               </div>
             </> : <>
-              {/* Card step */}
               <div className="flex items-center gap-2">
                 <button onClick={() => { setStep('amount'); setMsg(null); }} className="text-gray-400 hover:text-gray-600 cursor-pointer">
                   <ChevronLeft size={18} />
@@ -231,7 +262,6 @@ export function ProfileView({ profile, transactions: initialTx }: Props) {
                 <span className="ml-auto text-sm font-bold text-blue-700">{fmtKzt(Number(amount))}</span>
               </div>
 
-              {/* Card preview */}
               <div className="rounded-xl bg-gradient-to-br from-blue-600 to-blue-800 p-4 text-white space-y-3">
                 <div className="flex justify-between items-center">
                   <span className="text-xs text-blue-200">WagonFinder Pay</span>
@@ -287,7 +317,7 @@ export function ProfileView({ profile, transactions: initialTx }: Props) {
               )}
 
               <Button className="w-full" onClick={handleTopUp} loading={topping}>
-                <Lock size={13} /> Оплатить {fmtKzt(Number(amount))}
+                <Lock size={13} /> {tc('confirm')} {fmtKzt(Number(amount))}
               </Button>
 
               <p className="text-[11px] text-gray-400 text-center flex items-center justify-center gap-1">

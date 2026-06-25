@@ -5,17 +5,15 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { formatDate } from '@/lib/utils';
 import type { PendingApplication, RejectedApplication, Profile } from '@/types';
-import { CheckCircle, XCircle, Inbox, Search, ArrowRight, Clock } from 'lucide-react';
+import { CheckCircle, XCircle, Inbox, Search, ArrowRight, Clock, Shield } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 
-const WAGON_TYPE_LABELS: Record<string, string> = {
-  tank: 'Цистерна', hopper: 'Хоппер', flatcar: 'Платформа',
-  boxcar: 'Крытый', gondola: 'Полувагон', refrigerator: 'Рефрижератор',
-};
 
 type GU12OrderInfo = {
-  id: string; gu12_number: string; cargo_name: string;
+  id: string; gu12_number: string;
+  etsng_cargos?: { name: string; wagon_type_required: string | null };
   departure_esr_code: string; arrival_esr_code: string;
-  departure_station_name?: string; arrival_station_name?: string;
+  departure_station?: { name: string }; arrival_station?: { name: string };
   period_start: string; period_end: string;
   cargo_etsng_code: string;
   quantity_planned: number; quantity_fulfilled: number;
@@ -56,6 +54,9 @@ interface Props {
 }
 
 export function ShipperShipmentsView({ applications, rejected, outgoing = [], rejectedOutgoing = [], myBin = '', profile }: Props) {
+  const tr = useTranslations('requests');
+  const tc = useTranslations('common');
+  const twt = useTranslations('wagonTypes');
   const [appList, setAppList] = useState<AppWithDetails[]>(applications);
   const [updatingApp, setUpdatingApp] = useState<string | null>(null);
   const [acceptError, setAcceptError] = useState('');
@@ -67,7 +68,7 @@ export function ShipperShipmentsView({ applications, rejected, outgoing = [], re
 
   const orderFulfillment = useMemo(() => {
     const map: Record<string, { planned: number; fulfilled: number }> = {};
-    applications.forEach((a) => {
+    [...applications, ...outgoing].forEach((a) => {
       const o = a.gu12_order;
       if (o && !map[o.id]) map[o.id] = { planned: o.quantity_planned, fulfilled: o.quantity_fulfilled };
     });
@@ -133,31 +134,72 @@ export function ShipperShipmentsView({ applications, rejected, outgoing = [], re
 
     if (action === 'accepted') {
       setAcceptError('');
-      // Create contract immediately with pending_payment status
-      const { error: contractErr } = await supabase.from('contracts').insert({
-        application_id: app.id,
-        contract_number: makeContractNum(),
-        status: 'pending_payment',
-        executor_company: app.wagon_owner.company_name ?? app.wagon_owner.full_name,
-        executor_bin: app.wagon_owner.bin ?? '',
-        executor_name: app.wagon_owner.full_name,
-        customer_company: profile?.company_name ?? profile?.full_name ?? '',
-        customer_bin: myBin,
-        customer_name: profile?.full_name ?? '',
+      const executorBin = app.wagon_owner.bin ?? '';
+      const gu12OrderId = app.gu12_order_id;
+
+      // Check if a contract for this owner+order already exists
+      const { data: existingContracts } = await supabase
+        .from('contracts')
+        .select('id')
+        .eq('gu12_order_id', gu12OrderId)
+        .eq('executor_bin', executorBin)
+        .eq('customer_bin', myBin)
+        .maybeSingle();
+
+      let contractId: string;
+
+      if (existingContracts) {
+        // Add wagon to existing contract
+        contractId = existingContracts.id;
+      } else {
+        // Create a new contract for this owner+order pair
+        const { data: newContract, error: contractErr } = await supabase.from('contracts').insert({
+          application_id: app.id,
+          gu12_order_id: gu12OrderId,
+          executor_id: app.wagon_owner_id,
+          customer_id: profile?.id,
+          contract_number: makeContractNum(),
+          status: 'pending_payment',
+          executor_company: app.wagon_owner.company_name ?? app.wagon_owner.full_name,
+          executor_bin: executorBin,
+          executor_name: app.wagon_owner.full_name,
+          customer_company: profile?.company_name ?? profile?.full_name ?? '',
+          customer_bin: myBin,
+          customer_name: profile?.full_name ?? '',
+          cargo_name: app.gu12_order?.etsng_cargos?.name ?? '',
+          cargo_etsng: app.gu12_order?.cargo_etsng_code ?? '',
+          departure_station: app.gu12_order?.departure_station?.name ?? app.gu12_order?.departure_esr_code ?? '',
+          arrival_station: app.gu12_order?.arrival_station?.name ?? app.gu12_order?.arrival_esr_code ?? '',
+          period_start: app.gu12_order?.period_start ?? new Date().toISOString().slice(0,10),
+          period_end: app.gu12_order?.period_end ?? new Date().toISOString().slice(0,10),
+          deal_type: app.gu12_order?.deal_type ?? 'spot',
+        }).select('id').single();
+        if (contractErr || !newContract) {
+          setAcceptError(`Ошибка создания договора: ${contractErr?.message}`);
+          inFlightRef.current.delete(appId);
+          setUpdatingApp(null);
+          return;
+        }
+        contractId = newContract.id;
+      }
+
+      // Add wagon to contract_wagons
+      const { error: wagonErr } = await supabase.from('contract_wagons').insert({
+        contract_id: contractId,
+        wagon_id: app.wagon_id,
         wagon_number: app.wagon.number,
         wagon_type: app.wagon.wagon_type,
-        cargo_name: app.gu12_order?.cargo_name ?? '',
-        cargo_etsng: app.gu12_order?.cargo_etsng_code ?? '',
-        departure_station: app.gu12_order?.departure_station_name ?? app.gu12_order?.departure_esr_code ?? '',
-        arrival_station: app.gu12_order?.arrival_station_name ?? app.gu12_order?.arrival_esr_code ?? '',
-        period_start: app.gu12_order?.period_start ?? new Date().toISOString().slice(0,10),
-        period_end: app.gu12_order?.period_end ?? new Date().toISOString().slice(0,10),
+        application_id: app.id,
       });
-      if (contractErr) {
-        setAcceptError(`Ошибка создания договора: ${contractErr.message}`);
+      if (wagonErr) {
+        setAcceptError(`Ошибка добавления вагона: ${wagonErr.message}`);
         inFlightRef.current.delete(appId);
         setUpdatingApp(null);
         return;
+      }
+      // Mark wagon as booked (trigger also does this after migration 023 is applied)
+      if (app.wagon_id) {
+        await supabase.from('wagons').update({ status: 'booked' }).eq('id', app.wagon_id).eq('status', 'active');
       }
       await supabase.from('wagon_owner_pending_requests').delete().eq('id', appId);
       setAppList((prev) => prev.filter((a) => a.id !== appId));
@@ -189,14 +231,14 @@ export function ShipperShipmentsView({ applications, rejected, outgoing = [], re
   return (
     <div className="h-full flex flex-col gap-4 min-h-0">
       <div className="shrink-0">
-        <h2 className="text-lg font-semibold text-gray-900">Заявки</h2>
-        <p className="text-sm text-gray-500 mt-0.5">Входящие и исходящие заявки на вагоны</p>
+        <h2 className="text-lg font-semibold text-gray-900">{tr('title')}</h2>
+        <p className="text-sm text-gray-500 mt-0.5">{tr('incoming')} / {tr('outgoing')}</p>
       </div>
 
       {acceptError && (
         <div className="flex items-center gap-2 text-sm rounded-lg bg-red-50 border border-red-200 px-4 py-2.5 text-red-700 shrink-0">
           <span>{acceptError}</span>
-          <button onClick={() => setAcceptError('')} className="ml-auto text-xs underline cursor-pointer">Закрыть</button>
+          <button onClick={() => setAcceptError('')} className="ml-auto text-xs underline cursor-pointer">{tc('close')}</button>
         </div>
       )}
 
@@ -204,8 +246,8 @@ export function ShipperShipmentsView({ applications, rejected, outgoing = [], re
       <div className="flex items-center gap-3 shrink-0">
         <div className="flex gap-1 border-b border-gray-200 flex-1">
           {([
-            { key: 'pending',  label: `Ожидающие${pendingTotal > 0 ? ` (${pendingTotal})` : ''}` },
-            { key: 'rejected', label: `Отказанные${(rejected.length + rejectedOutgoing.length) > 0 ? ` (${rejected.length + rejectedOutgoing.length})` : ''}` },
+            { key: 'pending',  label: `${tr('pending')}${pendingTotal > 0 ? ` (${pendingTotal})` : ''}` },
+            { key: 'rejected', label: `${tr('rejected')}${(rejected.length + rejectedOutgoing.length) > 0 ? ` (${rejected.length + rejectedOutgoing.length})` : ''}` },
           ] as const).map(({ key, label }) => (
             <button key={key} onClick={() => setSubTab(key)}
               className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer ${
@@ -219,7 +261,7 @@ export function ShipperShipmentsView({ applications, rejected, outgoing = [], re
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="№ ГУ-12 или вагон..."
+            placeholder={tr('searchPlaceholder')}
             className="pl-8 pr-3 py-1.5 text-xs rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 w-52"
           />
         </div>
@@ -231,23 +273,27 @@ export function ShipperShipmentsView({ applications, rejected, outgoing = [], re
           {/* Incoming: wagon owners → shipper's orders */}
           <div className="flex flex-col flex-1 min-h-0">
             <h3 className="text-sm font-semibold text-gray-600 mb-3 shrink-0">
-              Входящие заявки от перевозчиков
+              {tr('incoming')}
               {filteredApps.length > 0 && <span className="ml-2 text-xs font-normal text-gray-400">({filteredApps.length})</span>}
             </h3>
             {filteredApps.length === 0 ? (
               <div className="flex-1 min-h-0 flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-xl bg-white text-center">
                 <Inbox size={28} className="text-gray-300 mb-2" />
-                <p className="text-gray-500 text-sm">{filter ? 'Ничего не найдено' : 'Нет входящих заявок'}</p>
-                {!filter && <p className="text-xs text-gray-400 mt-1">Опубликуйте грузы на биржу чтобы получать заявки</p>}
+                <p className="text-gray-500 text-sm">{filter ? tr('nothingFound') : tr('noIncoming')}</p>
+                {!filter && <p className="text-xs text-gray-400 mt-1">{tr('noIncomingHint')}</p>}
               </div>
             ) : (
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col flex-1 min-h-0">
                 <div className="overflow-auto flex-1 min-h-0">
-                  <table className="w-full text-sm">
+                  <table className="w-full text-sm table-fixed">
+                    <colgroup>
+                      <col className="w-[18%]" /><col className="w-[16%]" /><col className="w-[12%]" />
+                      <col className="w-[18%]" /><col className="w-[16%]" /><col className="w-[20%]" />
+                    </colgroup>
                     <thead className="sticky top-0 z-10">
                       <tr className="border-b border-gray-100 bg-gray-50">
-                        {['Груз (ГУ-12)', 'Прогресс', 'Перевозчик', 'Вагон', 'Статус', 'Действие'].map((h) => (
-                          <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                        {[tr('colCargo'), tr('colCarrier'), tr('colWagon'), tr('colRoute'), tr('colProgress'), tr('colAction')].map((h) => (
+                          <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
                         ))}
                       </tr>
                     </thead>
@@ -258,44 +304,48 @@ export function ShipperShipmentsView({ applications, rejected, outgoing = [], re
                         const pct = f && f.planned > 0 ? Math.min(100, Math.round((f.fulfilled / f.planned) * 100)) : 0;
                         return (
                           <tr key={app.id} className="hover:bg-gray-50 transition-colors">
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              <div className="font-mono text-xs text-blue-700 font-medium">{o?.gu12_number}</div>
-                              <div className="text-xs text-gray-500">{o?.cargo_name}</div>
+                            <td className="px-4 py-3">
+                              <div className="font-mono text-xs text-blue-700 font-medium truncate">{o?.gu12_number}</div>
+                              <div className="text-xs text-gray-500 truncate">{o?.etsng_cargos?.name}</div>
                             </td>
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              {f ? (
-                                <div className="min-w-[80px]">
-                                  <div className="text-xs text-gray-500">
-                                    Подобрано вагонов: <span className="font-semibold text-gray-800">{f.fulfilled}</span> из <span className="font-semibold text-gray-800">{f.planned}</span>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center gap-1 text-xs text-gray-400 italic"><Shield size={11} className="shrink-0" /> Скрыто до оплаты</div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="font-mono text-xs text-gray-800">{app.wagon.number}</div>
+                              <div className="text-xs text-gray-400">{twt(app.wagon.wagon_type as Parameters<typeof twt>[0])} · {app.wagon.payload_capacity_tons}т</div>
+                            </td>
+                            <td className="px-4 py-3">
+                              {o ? (
+                                <>
+                                  <div className="flex items-center gap-1 text-xs">
+                                    <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">{o.departure_esr_code}</span>
+                                    <ArrowRight size={10} className="text-gray-400 shrink-0" />
+                                    <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">{o.arrival_esr_code}</span>
                                   </div>
+                                  <div className="text-xs text-gray-400 mt-0.5 truncate">{o.departure_station?.name} → {o.arrival_station?.name}</div>
+                                </>
+                              ) : <span className="text-gray-300 text-xs">—</span>}
+                            </td>
+                            <td className="px-4 py-3">
+                              {f ? (
+                                <div>
+                                  <div className="text-xs text-gray-500">{tr('wagonsMatched', { fulfilled: f.fulfilled, planned: f.planned })}</div>
                                   <div className="mt-1 h-1.5 bg-gray-100 rounded-full overflow-hidden w-20">
                                     <div className={`h-full rounded-full ${pct >= 100 ? 'bg-green-500' : 'bg-blue-500'}`} style={{ width: `${pct}%` }} />
                                   </div>
                                 </div>
                               ) : <span className="text-gray-300 text-xs">—</span>}
                             </td>
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              <div className="font-medium text-gray-900 text-xs">{app.wagon_owner.company_name ?? app.wagon_owner.full_name}</div>
-                              <div className="text-xs text-gray-400">БИН {app.wagon_owner.bin}</div>
-                            </td>
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              <div className="font-mono text-xs text-gray-800">{app.wagon.number}</div>
-                              <div className="text-xs text-gray-400">{WAGON_TYPE_LABELS[app.wagon.wagon_type]} · {app.wagon.payload_capacity_tons}т</div>
-                            </td>
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
-                                <Clock size={10} /> Ожидает принятия
-                              </span>
-                            </td>
                             <td className="px-4 py-3">
                               <div className="flex gap-1.5">
                                 <button disabled={updatingApp === app.id} onClick={() => updateAppStatus(app.id, 'accepted')}
                                   className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg bg-green-50 border border-green-200 text-green-700 hover:bg-green-100 transition-colors cursor-pointer disabled:opacity-40">
-                                  <CheckCircle size={12} /> Принять
+                                  <CheckCircle size={12} /> {tr('acceptRequest')}
                                 </button>
                                 <button disabled={updatingApp === app.id} onClick={() => updateAppStatus(app.id, 'rejected')}
                                   className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 transition-colors cursor-pointer disabled:opacity-40">
-                                  <XCircle size={12} /> Отклонить
+                                  <XCircle size={12} /> {tr('rejectRequest')}
                                 </button>
                               </div>
                             </td>
@@ -312,57 +362,69 @@ export function ShipperShipmentsView({ applications, rejected, outgoing = [], re
           {/* Outgoing: shipper → wagon owners */}
           <div className="flex flex-col flex-1 min-h-0">
             <h3 className="text-sm font-semibold text-gray-600 mb-3 shrink-0">
-              Мои отправленные заявки
+              {tr('outgoing')}
               {filteredOutgoing.length > 0 && <span className="ml-2 text-xs font-normal text-gray-400">({filteredOutgoing.length})</span>}
             </h3>
             {filteredOutgoing.length === 0 ? (
               <div className="flex-1 min-h-0 flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-xl bg-white text-center">
                 <Inbox size={28} className="text-gray-300 mb-2" />
-                <p className="text-gray-500 text-sm">{filter ? 'Ничего не найдено' : 'Нет отправленных заявок'}</p>
+                <p className="text-gray-500 text-sm">{filter ? tr('nothingFound') : tr('noOutgoing')}</p>
               </div>
             ) : (
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col flex-1 min-h-0">
                 <div className="overflow-auto flex-1 min-h-0">
-                  <table className="w-full text-sm">
+                  <table className="w-full text-sm table-fixed">
+                    <colgroup>
+                      <col className="w-[18%]" /><col className="w-[16%]" /><col className="w-[12%]" />
+                      <col className="w-[18%]" /><col className="w-[16%]" /><col className="w-[20%]" />
+                    </colgroup>
                     <thead className="sticky top-0 z-10">
                       <tr className="border-b border-gray-100 bg-gray-50">
-                        {['Груз (ГУ-12)', 'Перевозчик', 'Вагон', 'Маршрут', 'Статус', 'Действие'].map((h) => (
-                          <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                        {[tr('colCargo'), tr('colCarrier'), tr('colWagon'), tr('colRoute'), tr('colProgress'), tr('colAction')].map((h) => (
+                          <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50">
                       {filteredOutgoing.map((req) => {
                         const o = req.gu12_order;
+                        const f = o ? orderFulfillment[o.id] : null;
+                        const pct = f && f.planned > 0 ? Math.min(100, Math.round((f.fulfilled / f.planned) * 100)) : 0;
                         return (
                           <tr key={req.id} className="hover:bg-gray-50 transition-colors">
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              <div className="font-mono text-xs text-blue-700 font-medium">{o?.gu12_number ?? '—'}</div>
-                              <div className="text-xs text-gray-500">{o?.cargo_name}</div>
+                            <td className="px-4 py-3">
+                              <div className="font-mono text-xs text-blue-700 font-medium truncate">{o?.gu12_number ?? '—'}</div>
+                              <div className="text-xs text-gray-500 truncate">{o?.etsng_cargos?.name}</div>
                             </td>
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              <div className="font-medium text-gray-900 text-xs">{req.wagon_owner.company_name ?? req.wagon_owner.full_name}</div>
-                              <div className="text-xs text-gray-400">БИН {req.wagon_owner.bin}</div>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center gap-1 text-xs text-gray-400 italic"><Shield size={11} className="shrink-0" /> Скрыто до оплаты</div>
                             </td>
-                            <td className="px-4 py-3 whitespace-nowrap">
+                            <td className="px-4 py-3">
                               <div className="font-mono text-xs text-gray-800">{req.wagon.number}</div>
-                              <div className="text-xs text-gray-400">{WAGON_TYPE_LABELS[req.wagon.wagon_type]} · {req.wagon.payload_capacity_tons}т</div>
+                              <div className="text-xs text-gray-400">{twt(req.wagon.wagon_type as Parameters<typeof twt>[0])} · {req.wagon.payload_capacity_tons}т</div>
                             </td>
-                            <td className="px-4 py-3 whitespace-nowrap">
+                            <td className="px-4 py-3">
                               <div className="flex items-center gap-1 text-xs">
                                 <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">{o?.departure_esr_code}</span>
-                                <ArrowRight size={10} className="text-gray-400" />
+                                <ArrowRight size={10} className="text-gray-400 shrink-0" />
                                 <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">{o?.arrival_esr_code}</span>
                               </div>
-                              <div className="text-xs text-gray-400 mt-0.5">{o?.departure_station_name} → {o?.arrival_station_name}</div>
+                              <div className="text-xs text-gray-400 mt-0.5 truncate">{o?.departure_station?.name} → {o?.arrival_station?.name}</div>
                             </td>
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
-                                <Clock size={10} /> Ожидает ответа перевозчика
+                            <td className="px-4 py-3">
+                              {f ? (
+                                <div>
+                                  <div className="text-xs text-gray-500">{tr('wagonsMatched', { fulfilled: f.fulfilled, planned: f.planned })}</div>
+                                  <div className="mt-1 h-1.5 bg-gray-100 rounded-full overflow-hidden w-20">
+                                    <div className={`h-full rounded-full ${pct >= 100 ? 'bg-green-500' : 'bg-blue-500'}`} style={{ width: `${pct}%` }} />
+                                  </div>
+                                </div>
+                              ) : <span className="text-gray-300 text-xs">—</span>}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className="inline-flex items-center gap-1 text-xs text-amber-600 whitespace-nowrap">
+                                <Clock size={11} /> {tr('awaitingCarrier')}
                               </span>
-                            </td>
-                            <td className="px-4 py-3 whitespace-nowrap text-xs text-gray-400">
-                              —
                             </td>
                           </tr>
                         );
@@ -381,13 +443,13 @@ export function ShipperShipmentsView({ applications, rejected, outgoing = [], re
           {/* Rejected incoming */}
           <div className="flex flex-col flex-1 min-h-0">
             <h3 className="text-sm font-semibold text-gray-600 mb-3 shrink-0">
-              Отказанные входящие
+              {tr('rejectedIncoming')}
               {filteredRejected.length > 0 && <span className="ml-2 text-xs font-normal text-gray-400">({filteredRejected.length})</span>}
             </h3>
             {filteredRejected.length === 0 ? (
               <div className="flex-1 min-h-0 flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-xl bg-white text-center">
                 <XCircle size={28} className="text-gray-200 mb-2" />
-                <p className="text-gray-500 text-sm">{filter ? 'Ничего не найдено' : 'Нет отказанных входящих заявок'}</p>
+                <p className="text-gray-500 text-sm">{filter ? tr('nothingFound') : tr('noRejectedIncoming')}</p>
               </div>
             ) : (
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col flex-1 min-h-0">
@@ -395,7 +457,7 @@ export function ShipperShipmentsView({ applications, rejected, outgoing = [], re
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 z-10">
                       <tr className="border-b border-gray-100 bg-gray-50">
-                        {['Груз (ГУ-12)', 'Перевозчик', 'Вагон', 'Причина / Дата'].map((h) => (
+                        {[tr('colCargo'), tr('colCarrier'), tr('colWagon'), tr('colReason')].map((h) => (
                           <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -407,15 +469,14 @@ export function ShipperShipmentsView({ applications, rejected, outgoing = [], re
                           <tr key={app.id} className="hover:bg-gray-50 transition-colors">
                             <td className="px-4 py-3 whitespace-nowrap">
                               <div className="font-mono text-xs text-blue-700 font-medium">{app.gu12_order?.gu12_number}</div>
-                              <div className="text-xs text-gray-500">{app.gu12_order?.cargo_name}</div>
+                              <div className="text-xs text-gray-500">{app.gu12_order?.etsng_cargos?.name}</div>
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap">
-                              <div className="font-medium text-gray-900 text-xs">{wd.wagon_owner?.company_name ?? wd.wagon_owner?.full_name ?? '—'}</div>
-                              <div className="text-xs text-gray-400">БИН {wd.wagon_owner?.bin ?? '—'}</div>
+                              <div className="flex items-center gap-1 text-xs text-gray-400 italic"><Shield size={11} /> Скрыто до оплаты</div>
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               <div className="font-mono text-xs text-gray-800">{wd.wagon?.number ?? '—'}</div>
-                              <div className="text-xs text-gray-400">{WAGON_TYPE_LABELS[wd.wagon?.wagon_type ?? ''] ?? ''}</div>
+                              <div className="text-xs text-gray-400">{wd.wagon?.wagon_type ? twt(wd.wagon.wagon_type as Parameters<typeof twt>[0]) : ''}</div>
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               {app.rejection_reason && <div className="text-xs text-gray-500 mb-0.5">{app.rejection_reason}</div>}
@@ -434,13 +495,13 @@ export function ShipperShipmentsView({ applications, rejected, outgoing = [], re
           {/* Rejected outgoing */}
           <div className="flex flex-col flex-1 min-h-0">
             <h3 className="text-sm font-semibold text-gray-600 mb-3 shrink-0">
-              Отказанные исходящие
+              {tr('rejectedOutgoing')}
               {filteredRejectedOutgoing.length > 0 && <span className="ml-2 text-xs font-normal text-gray-400">({filteredRejectedOutgoing.length})</span>}
             </h3>
             {filteredRejectedOutgoing.length === 0 ? (
               <div className="flex-1 min-h-0 flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-xl bg-white text-center">
                 <XCircle size={28} className="text-gray-200 mb-2" />
-                <p className="text-gray-500 text-sm">{filter ? 'Ничего не найдено' : 'Нет отказанных исходящих заявок'}</p>
+                <p className="text-gray-500 text-sm">{filter ? tr('nothingFound') : tr('noRejectedOutgoing')}</p>
               </div>
             ) : (
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col flex-1 min-h-0">
@@ -448,7 +509,7 @@ export function ShipperShipmentsView({ applications, rejected, outgoing = [], re
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 z-10">
                       <tr className="border-b border-gray-100 bg-gray-50">
-                        {['Груз (ГУ-12)', 'Перевозчик', 'Вагон', 'Маршрут', 'Дата'].map((h) => (
+                        {[tr('colCargo'), tr('colCarrier'), tr('colWagon'), tr('colRoute'), tr('colDate')].map((h) => (
                           <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -460,15 +521,15 @@ export function ShipperShipmentsView({ applications, rejected, outgoing = [], re
                           <tr key={req.id} className="hover:bg-gray-50 transition-colors">
                             <td className="px-4 py-3 whitespace-nowrap">
                               <div className="font-mono text-xs text-blue-700 font-medium">{o?.gu12_number ?? '—'}</div>
-                              <div className="text-xs text-gray-500">{o?.cargo_name}</div>
+                              <div className="text-xs text-gray-500">{o?.etsng_cargos?.name}</div>
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               <div className="font-medium text-gray-900 text-xs">{req.wagon_owner.company_name ?? req.wagon_owner.full_name}</div>
-                              <div className="text-xs text-gray-400">БИН {req.wagon_owner.bin}</div>
+                              <div className="text-xs text-gray-400">{tr('bin')} {req.wagon_owner.bin}</div>
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               <div className="font-mono text-xs text-gray-800">{req.wagon.number}</div>
-                              <div className="text-xs text-gray-400">{WAGON_TYPE_LABELS[req.wagon.wagon_type]}</div>
+                              <div className="text-xs text-gray-400">{twt(req.wagon.wagon_type as Parameters<typeof twt>[0])}</div>
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               <div className="flex items-center gap-1 text-xs">
