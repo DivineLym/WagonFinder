@@ -1,19 +1,28 @@
 'use client';
 
 import { useState } from 'react';
+import { IMaskInput } from 'react-imask';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
 import type { Profile } from '@/types';
-import { CheckCircle, FileText, Shield } from 'lucide-react';
+import { CheckCircle, Download, Shield, AlertCircle, Phone, Mail } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 
 const WAGON_TYPE_LABELS: Record<string, string> = {
   tank: 'Цистерна', hopper: 'Хоппер', flatcar: 'Платформа',
   boxcar: 'Крытый вагон', gondola: 'Полувагон', refrigerator: 'Рефрижератор',
 };
 
+interface ContractWagon {
+  id: string;
+  wagon_number: string;
+  wagon_type: string;
+}
+
 interface Contract {
   id: string;
-  application_id: string;
+  application_id: string | null;
   contract_number: string;
   executor_company: string;
   executor_bin: string;
@@ -21,8 +30,8 @@ interface Contract {
   customer_company: string;
   customer_bin: string;
   customer_name: string;
-  wagon_number: string;
-  wagon_type: string;
+  wagon_number: string | null;
+  wagon_type: string | null;
   cargo_name: string;
   cargo_etsng: string;
   departure_station: string;
@@ -31,7 +40,12 @@ interface Contract {
   period_end: string;
   executor_signed_at: string | null;
   customer_signed_at: string | null;
+  executor_phone: string | null;
+  executor_email: string | null;
+  customer_phone: string | null;
+  customer_email: string | null;
   created_at: string;
+  contract_wagons?: ContractWagon[];
 }
 
 interface Props {
@@ -43,23 +57,306 @@ function fmt(d: string) {
   return new Date(d).toLocaleDateString('ru-RU');
 }
 
+function fmtKzt(n: number) { return n.toLocaleString('ru-KZ') + ' ₸'; }
+
+const KZ_MONTHS = ['қаңтар','ақпан','наурыз','сәуір','мамыр','маусым','шілде','тамыз','қыркүйек','қазан','қараша','желтоқсан'];
+
 export function ContractView({ contract: initial, profile }: Props) {
+  const tc = useTranslations('contracts');
   const [contract, setContract] = useState(initial);
   const [signing, setSigning] = useState(false);
+  const [signError, setSignError] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [emailTouched, setEmailTouched] = useState(false);
+
+  const router = useRouter();
+
+  function downloadPdf() {
+    const c = contract;
+    const wagons = c.contract_wagons && c.contract_wagons.length > 0
+      ? c.contract_wagons
+      : c.wagon_number ? [{ id: '', wagon_number: c.wagon_number, wagon_type: c.wagon_type ?? '' }] : [];
+    const wagonListRu = wagons.map((w) => `вагон <strong>${w.wagon_number}</strong> (${WAGON_TYPE_LABELS[w.wagon_type] ?? w.wagon_type})`).join(', ');
+    const wagonListKk = wagons.map((w) => `вагон <strong>${w.wagon_number}</strong> (${WAGON_TYPE_LABELS[w.wagon_type] ?? w.wagon_type})`).join(', ');
+    const today = new Date(c.created_at);
+    const city = c.departure_station.split('-')[0].split(' ')[0];
+    const dateStr = `«${today.getDate()}» ${today.toLocaleDateString('ru-RU', { month: 'long' })} ${today.getFullYear()}`;
+    const dateStrKz = `«${today.getDate()}» ${KZ_MONTHS[today.getMonth()]} ${today.getFullYear()}`;
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/>
+    <title>Договор / Шарт ${c.contract_number}</title>
+    <style>
+      @page { size: A4; margin: 15mm 15mm 15mm 20mm; }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: 'Times New Roman', Times, serif; font-size: 10px; color: #000; }
+      table.bilingual { width: 100%; border-collapse: collapse; }
+      table.bilingual td { width: 50%; vertical-align: top; padding: 0 6px; }
+      table.bilingual td:first-child { border-right: 1px solid #999; padding-left: 0; }
+      h1 { font-size: 11px; font-weight: bold; text-align: center; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+      h2 { font-size: 10px; text-align: center; margin-bottom: 8px; }
+      .date-city { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 9px; }
+      p { margin-bottom: 4px; line-height: 1.4; }
+      .section-title { font-weight: bold; text-align: center; margin: 8px 0 3px; font-size: 10px; }
+      ul { margin: 2px 0 4px 10px; }
+      li { margin-bottom: 1px; line-height: 1.4; }
+      .sig-grid { display: flex; gap: 20px; margin-top: 16px; padding-top: 8px; border-top: 1px solid #ccc; }
+      .sig-col { flex: 1; }
+      .sig-line { border-bottom: 1px dashed #555; margin: 16px 0 2px; }
+      .sig-label { font-size: 8px; color: #555; }
+      .sig-signed { font-size: 8px; color: #166534; }
+      strong { font-weight: bold; }
+    </style>
+    </head><body>
+    <table class="bilingual"><tr>
+      <td>
+        <h1>ДОГОВОР № ${c.contract_number}</h1>
+        <h2>оказания услуг по предоставлению подвижного состава (контейнера)</h2>
+        <div class="date-city"><span>г. ${city}</span><span>${dateStr} год</span></div>
+        <p><strong>«${c.executor_company}»</strong>, именуемое «<strong>Исполнитель</strong>», БИН ${c.executor_bin}, в лице ${c.executor_name}, и <strong>«${c.customer_company}»</strong>, именуемое «<strong>Заказчик</strong>», БИН ${c.customer_bin}, в лице ${c.customer_name}, совместно именуемые «Стороны», заключили настоящий Договор о нижеследующем:</p>
+
+        <p class="section-title">1. ПРЕДМЕТ НАСТОЯЩЕГО ДОГОВОРА</p>
+        <p>1.1. Исполнитель обязуется предоставлять Заказчику за плату вагоны (контейнеры) для перевозки грузов во внутриреспубликанском и международном сообщениях, а Заказчик принять и оплатить оказанные услуги.</p>
+        <p>1.2. Подвижной состав: ${wagonListRu}.</p>
+        <p>1.3. Груз: <strong>${c.cargo_name}</strong> (ЕТСНГ: ${c.cargo_etsng}). Маршрут: <strong>${c.departure_station} → ${c.arrival_station}</strong>.</p>
+        <p>1.4. Период подачи: <strong>${fmt(c.period_start)} – ${fmt(c.period_end)}</strong>.</p>
+        <p>1.5. Стоимость услуг определяется Сторонами в Протоколе согласования договорных цен, являющемся неотъемлемой частью настоящего Договора.</p>
+        <p>1.6. Исполнитель вправе привлекать субподрядчиков для исполнения обязательств по настоящему Договору.</p>
+
+        <p class="section-title">2. ПРАВА И ОБЯЗАННОСТИ СТОРОН</p>
+        <p><strong>2.1. Исполнитель обязан:</strong></p>
+        <p>2.1.1. Своевременно оказывать услуги при условии выполнения Заказчиком всех обязательств по настоящему Договору.</p>
+        <p>2.1.2. Обеспечить наличие технически исправного подвижного состава на станции погрузки.</p>
+        <p>2.1.3. Уведомлять Заказчика об изменении стоимости услуг не менее чем за 15 (пятнадцать) календарных дней.</p>
+        <p><strong>2.2. Заказчик обязан:</strong></p>
+        <p>2.2.1. Подавать заявки по форме ГУ-12 с обязательным указанием наименования Исполнителя как оператора подвижного состава.</p>
+        <p>2.2.2. Производить оплату услуг Исполнителя в соответствии с условиями настоящего Договора.</p>
+        <p>2.2.3. Обеспечить нахождение вагонов на станции назначения не более 2 (двух) суток с даты прибытия.</p>
+        <p>2.2.4. Обеспечить очистку и промывку вагонов после выгрузки за свой счёт.</p>
+        <p>2.2.5. При отказе от погрузки уведомить Исполнителя не менее чем за 7 (семь) рабочих дней.</p>
+        <p>2.2.6. Обеспечить сохранность вагонов в процессе использования.</p>
+        <p>2.2.7. Не допускать использование вагонов не по назначению или для перевозки иных грузов без согласования с Исполнителем.</p>
+        <p>2.2.8. Соблюдать правила технической эксплуатации железных дорог и требования ГО ЖД РК.</p>
+        <p>2.2.9. Предоставлять Исполнителю сведения о фактическом местонахождении вагонов по требованию.</p>
+        <p>2.2.10. Нести ответственность за своевременное оформление перевозочных документов.</p>
+        <p><strong>2.3. Исполнитель вправе:</strong></p>
+        <p>2.3.1. В одностороннем порядке изменять стоимость услуг с уведомлением Заказчика за 15 календарных дней.</p>
+        <p>2.3.2. Приостанавливать оказание услуг при нарушении Заказчиком условий оплаты.</p>
+        <p>2.3.3. Требовать возмещения убытков, причинённых ненадлежащим использованием вагонов.</p>
+        <p><strong>2.4. Заказчик вправе:</strong></p>
+        <p>2.4.1. Требовать предоставления технически исправного подвижного состава в согласованные сроки.</p>
+        <p>2.4.2. Получать информацию о местонахождении вагонов.</p>
+
+        <p class="section-title">3. СТОИМОСТЬ УСЛУГ И ПОРЯДОК РАСЧЁТОВ</p>
+        <p>3.1. Заказчик производит 100% предоплату стоимости услуг не позднее 2 (двух) рабочих дней до даты подачи вагонов. Расчёты производятся в тенге.</p>
+        <p>3.2. За превышение сроков нахождения вагонов под грузовыми операциями сверх установленных норм — штраф в размере 12 500 (двенадцать тысяч пятьсот) тенге за каждый вагон в сутки.</p>
+        <p>3.3. Оплата производится путём перечисления денежных средств на расчётный счёт Исполнителя.</p>
+        <p>3.4. Датой оплаты считается дата поступления денежных средств на счёт Исполнителя.</p>
+        <p>3.5. Все банковские расходы, связанные с перечислением денежных средств, несёт Заказчик.</p>
+        <p>3.6. Стороны производят сверку расчётов не реже одного раза в квартал.</p>
+
+        <p class="section-title">4. ОТВЕТСТВЕННОСТЬ СТОРОН</p>
+        <p>4.1. Стороны несут ответственность за неисполнение или ненадлежащее исполнение обязательств по настоящему Договору в соответствии с законодательством Республики Казахстан.</p>
+        <p>4.2. За просрочку оплаты Заказчик уплачивает пеню в размере 0,1% от просроченной суммы за каждый день просрочки, но не более 10% от суммы Договора.</p>
+        <p>4.3. Исполнитель несёт ответственность за предоставление технически неисправных вагонов.</p>
+        <p>4.4. Заказчик несёт ответственность за повреждение или утрату вагонов в период их нахождения под управлением Заказчика.</p>
+        <p>4.5. Стороны освобождаются от ответственности за частичное или полное неисполнение обязательств по настоящему Договору в случае обстоятельств непреодолимой силы.</p>
+        <p>4.6. Ответственность Исполнителя ограничена стоимостью услуг по соответствующей заявке.</p>
+
+        <p class="section-title">5. ОБСТОЯТЕЛЬСТВА НЕПРЕОДОЛИМОЙ СИЛЫ</p>
+        <p>5.1. Стороны освобождаются от ответственности за неисполнение обязательств вследствие форс-мажорных обстоятельств: стихийных бедствий, войн, эмбарго, актов государственных органов и иных обстоятельств, находящихся вне разумного контроля Сторон.</p>
+        <p>5.2. Сторона, для которой возникли обстоятельства непреодолимой силы, обязана уведомить другую Сторону в течение 5 (пяти) рабочих дней с даты их возникновения.</p>
+        <p>5.3. Факт наступления форс-мажорных обстоятельств подтверждается документами уполномоченных органов.</p>
+        <p>5.4. Если обстоятельства непреодолимой силы продолжаются более 30 (тридцати) дней, каждая из Сторон вправе расторгнуть настоящий Договор.</p>
+        <p>5.5. Уведомление о прекращении форс-мажорных обстоятельств направляется незамедлительно.</p>
+
+        <p class="section-title">6. ПОРЯДОК РАЗРЕШЕНИЯ СПОРОВ</p>
+        <p>6.1. Все споры и разногласия, возникающие между Сторонами, решаются путём переговоров.</p>
+        <p>6.2. В случае недостижения согласия в течение 30 (тридцати) дней споры передаются на рассмотрение в суд по месту нахождения ответчика.</p>
+        <p>6.3. Применимое право — законодательство Республики Казахстан.</p>
+        <p>6.4. До обращения в суд Стороны обязаны направить друг другу претензию в письменном виде.</p>
+
+        <p class="section-title">7. РАСТОРЖЕНИЕ НАСТОЯЩЕГО ДОГОВОРА</p>
+        <p>7.1. Настоящий Договор может быть расторгнут по соглашению Сторон.</p>
+        <p>7.2. Каждая из Сторон вправе отказаться от исполнения настоящего Договора, письменно уведомив другую Сторону не менее чем за 30 (тридцать) календарных дней.</p>
+        <p>7.3. Исполнитель вправе расторгнуть настоящий Договор в одностороннем порядке при нарушении Заказчиком сроков оплаты более чем на 10 (десять) рабочих дней.</p>
+
+        <p class="section-title">8. ПРОТИВОДЕЙСТВИЕ КОРРУПЦИИ</p>
+        <p>8.1. Стороны обязуются не предлагать, не давать, не обещать и не принимать вознаграждение в любой форме в целях получения коммерческого или иного преимущества.</p>
+        <p>8.2. Стороны обязуются незамедлительно уведомлять друг друга о ставших известными им фактах коррупции.</p>
+        <p>8.3. Нарушение антикоррупционных положений является основанием для расторжения настоящего Договора.</p>
+        <p>8.4. Стороны обязуются соблюдать Закон Республики Казахстан «О противодействии коррупции».</p>
+        <p>8.5. Каждая из Сторон несёт ответственность за действия своих сотрудников.</p>
+        <p>8.6. Стороны обязуются сохранять конфиденциальность информации, полученной в рамках настоящего Договора.</p>
+
+        <p class="section-title">9. ЗАКЛЮЧИТЕЛЬНЫЕ ПОЛОЖЕНИЯ</p>
+        <p>9.1. Настоящий Договор вступает в силу с даты подписания Сторонами и действует до ${fmt(c.period_end)}, а в части расчётов — до полного исполнения обязательств.</p>
+        <p>9.2. Все изменения и дополнения к настоящему Договору оформляются в письменной форме и подписываются обеими Сторонами.</p>
+        <p>9.3. Настоящий Договор подписан с использованием электронной цифровой подписи, что приравнивается к собственноручной подписи Сторон.</p>
+        <p>9.4. Во всём остальном, не предусмотренном настоящим Договором, Стороны руководствуются действующим законодательством Республики Казахстан.</p>
+        <p>9.5. Настоящий Договор составлен в двух экземплярах, имеющих одинаковую юридическую силу, по одному для каждой из Сторон.</p>
+        <p>9.6. Неотъемлемыми частями настоящего Договора являются: Протокол согласования договорных цен, заявки по форме ГУ-12.</p>
+        <p>9.7. Стороны признают юридическую силу документов, переданных по электронной почте, до момента получения оригиналов.</p>
+        <p>9.8. Настоящий Договор заключён на платформе WagonFinder. Идентификатор договора: ${c.contract_number}.</p>
+        <p>9.9. Настоящий Договор составлен на русском и казахском языках, при расхождении толкования приоритет имеет текст на русском языке.</p>
+
+        <p class="section-title">10. ЮРИДИЧЕСКИЕ АДРЕСА И БАНКОВСКИЕ РЕКВИЗИТЫ СТОРОН</p>
+        <div class="sig-grid">
+          <div class="sig-col">
+            <strong>Исполнитель:</strong><br/>${c.executor_company}<br/>БИН: ${c.executor_bin}<br/>${c.executor_name}
+            <div class="sig-line"></div>
+            ${c.executor_signed_at ? `<span class="sig-signed">✓ ЭЦП подписано ${fmt(c.executor_signed_at)}</span>` : '<span class="sig-label">МП / Подпись</span>'}
+          </div>
+          <div class="sig-col">
+            <strong>Заказчик:</strong><br/>${c.customer_company}<br/>БИН: ${c.customer_bin}<br/>${c.customer_name}
+            <div class="sig-line"></div>
+            ${c.customer_signed_at ? `<span class="sig-signed">✓ ЭЦП подписано ${fmt(c.customer_signed_at)}</span>` : '<span class="sig-label">МП / Подпись</span>'}
+          </div>
+        </div>
+      </td>
+      <td>
+        <h1>ШАРТ № ${c.contract_number}</h1>
+        <h2>жылжымалы құрамды (контейнерді) беру қызметтерін көрсету туралы</h2>
+        <div class="date-city"><span>${city} қ.</span><span>${dateStrKz} жыл</span></div>
+        <p><strong>«${c.executor_company}»</strong>, «<strong>Орындаушы</strong>» деп аталатын, БСН ${c.executor_bin}, ${c.executor_name} тұлғасында, және <strong>«${c.customer_company}»</strong>, «<strong>Тапсырыс беруші</strong>» деп аталатын, БСН ${c.customer_bin}, ${c.customer_name} тұлғасында, бірлесіп «Тараптар» деп аталатын, төмендегілер туралы осы Шартты жасасты:</p>
+
+        <p class="section-title">1. ОСЫ ШАРТТЫҢ МӘНІ</p>
+        <p>1.1. Орындаушы Тапсырыс берушіге ақы төленетін негізде ішкі және халықаралық қатынастарда жүк тасымалдау үшін вагондар (контейнерлер) беруге міндеттенеді, ал Тапсырыс беруші оларды қабылдап, көрсетілген қызметке ақы төлеуге міндеттенеді.</p>
+        <p>1.2. Жылжымалы құрам: ${wagonListKk}.</p>
+        <p>1.3. Жүк: <strong>${c.cargo_name}</strong> (ЕТСНГ: ${c.cargo_etsng}). Бағыт: <strong>${c.departure_station} → ${c.arrival_station}</strong>.</p>
+        <p>1.4. Беру кезеңі: <strong>${fmt(c.period_start)} – ${fmt(c.period_end)}</strong>.</p>
+        <p>1.5. Қызмет құны Шарттың ажырамас бөлігі болып табылатын Шарттық бағаларды келісу хаттамасында айқындалады.</p>
+        <p>1.6. Орындаушы осы Шарт бойынша міндеттемелерді орындау үшін қосалқы мердігерлерді тартуға құқылы.</p>
+
+        <p class="section-title">2. ТАРАПТАРДЫҢ ҚҰҚЫҚТАРЫ МЕН МІНДЕТТЕРІ</p>
+        <p><strong>2.1. Орындаушы міндетті:</strong></p>
+        <p>2.1.1. Тапсырыс беруші осы Шарт бойынша барлық міндеттемелерді орындаған кезде қызметтерді уақтылы көрсетуге.</p>
+        <p>2.1.2. Жүктеу стансасында техникалық жарамды жылжымалы құрамды қамтамасыз етуге.</p>
+        <p>2.1.3. Қызмет құнының өзгеруі туралы Тапсырыс берушіні кем дегенде 15 (он бес) күнтізбелік күн бұрын хабардар етуге.</p>
+        <p><strong>2.2. Тапсырыс беруші міндетті:</strong></p>
+        <p>2.2.1. ГУ-12 нысаны бойынша өтінімдерді жылжымалы құрам операторы ретінде Орындаушының атауын міндетті түрде көрсете отырып беруге.</p>
+        <p>2.2.2. Орындаушының қызметтеріне осы Шарт талаптарына сәйкес ақы төлеуге.</p>
+        <p>2.2.3. Вагондардың тағайындалу стансасына келген күннен бастап 2 (екі) тәуліктен артық тұрмауын қамтамасыз етуге.</p>
+        <p>2.2.4. Вагондарды түсіруден кейін өз қаражаты есебінен тазартуды және жууды қамтамасыз етуге.</p>
+        <p>2.2.5. Жүктеуден бас тартқан жағдайда Орындаушыны кем дегенде 7 (жеті) жұмыс күні бұрын хабардар етуге.</p>
+        <p>2.2.6. Пайдалану барысында вагондардың сақталуын қамтамасыз етуге.</p>
+        <p>2.2.7. Орындаушымен келіспестен вагондарды басқа мақсатта немесе өзге жүктерді тасымалдауға пайдалануға жол бермеуге.</p>
+        <p>2.2.8. ҚР ЖД техникалық пайдалану ережелерін және талаптарын сақтауға.</p>
+        <p>2.2.9. Орындаушының талабы бойынша вагондардың нақты орналасқан жері туралы мәліметтер беруге.</p>
+        <p>2.2.10. Тасымалдау құжаттарын уақтылы ресімдеу үшін жауапкершілік атқаруға.</p>
+        <p><strong>2.3. Орындаушы құқылы:</strong></p>
+        <p>2.3.1. Тапсырыс берушіні 15 күнтізбелік күн бұрын хабардар ете отырып, қызмет құнын біржақты тәртіппен өзгертуге.</p>
+        <p>2.3.2. Тапсырыс беруші төлем шарттарын бұзған кезде қызмет көрсетуді тоқтатуға.</p>
+        <p>2.3.3. Вагондарды ненадлежащий пайдаланудан келген шығындарды өтеуді талап етуге.</p>
+        <p><strong>2.4. Тапсырыс беруші құқылы:</strong></p>
+        <p>2.4.1. Келісілген мерзімде техникалық жарамды жылжымалы құрамды беруді талап етуге.</p>
+        <p>2.4.2. Вагондардың орналасқан жері туралы ақпарат алуға.</p>
+
+        <p class="section-title">3. ҚЫЗМЕТ ҚҰНЫ ЖӘНЕ ЕСЕП АЙЫРЫСУ ТӘРТІБІ</p>
+        <p>3.1. Тапсырыс беруші вагондарды беру күнінен кешіктірмей 2 (екі) жұмыс күні бұрын қызмет құнының 100% алдын ала төлемін жасайды. Есеп айырысулар теңгемен жүргізіледі.</p>
+        <p>3.2. Белгіленген нормадан асатын жүк операциялары үшін вагондардың тұруы — әрбір вагон үшін тәулігіне 12 500 (он екі мың бес жүз) теңге айыппұл.</p>
+        <p>3.3. Төлем Орындаушының есеп айырысу шотына қаражат аудару арқылы жүргізіледі.</p>
+        <p>3.4. Төлем күні Орындаушының шотына қаражат түскен күн болып есептеледі.</p>
+        <p>3.5. Қаражат аударумен байланысты барлық банктік шығыстарды Тапсырыс беруші көтереді.</p>
+        <p>3.6. Тараптар тоқсанына кемінде бір рет есеп айырысуды салыстырып тексереді.</p>
+
+        <p class="section-title">4. ТАРАПТАРДЫҢ ЖАУАПКЕРШІЛІГІ</p>
+        <p>4.1. Тараптар осы Шарт бойынша міндеттемелерді орындамағаны немесе тиісінше орындамағаны үшін Қазақстан Республикасының заңнамасына сәйкес жауапкершілік көтереді.</p>
+        <p>4.2. Төлемді кешіктіргені үшін Тапсырыс беруші кешіктірілген соманың әрбір күні үшін 0,1% мөлшерінде өсімпұл төлейді, бірақ Шарт сомасының 10%-нан аспайды.</p>
+        <p>4.3. Орындаушы техникалық ақаулы вагондарды берген үшін жауапкершілік атқарады.</p>
+        <p>4.4. Тапсырыс беруші вагондарды басқару кезеңінде олардың зақымдалуы немесе жоғалуы үшін жауапкершілік атқарады.</p>
+        <p>4.5. Тараптар еңсерілмейтін күш жағдайларында міндеттемелерді орындамағаны үшін жауапкершіліктен босатылады.</p>
+        <p>4.6. Орындаушының жауапкершілігі тиісті өтінім бойынша қызмет құнымен шектеледі.</p>
+
+        <p class="section-title">5. ЕҢСЕРІЛМЕЙТІН КҮШ ЖАҒДАЙЛАРЫ</p>
+        <p>5.1. Тараптар табиғи апаттар, соғыстар, эмбарго, мемлекеттік органдардың актілері және Тараптардың ақылға қонымды бақылауынан тыс өзге де жағдайлар салдарынан міндеттемелерді орындамағаны үшін жауапкершіліктен босатылады.</p>
+        <p>5.2. Еңсерілмейтін күш жағдайлары туындаған Тарап олар туындаған күннен бастап 5 (бес) жұмыс күні ішінде екінші Тарапты хабардар етуге міндетті.</p>
+        <p>5.3. Форс-мажор жағдайларының туындауы фактісі уәкілетті органдардың құжаттарымен расталады.</p>
+        <p>5.4. Еңсерілмейтін күш жағдайлары 30 (отыз) күннен артық жалғасса, Тараптардың әрқайсысы осы Шартты бұзуға құқылы.</p>
+        <p>5.5. Еңсерілмейтін күш жағдайларының тоқтатылғаны туралы хабарлама дереу жіберіледі.</p>
+
+        <p class="section-title">6. ДАУЛАР ШЕШУ ТӘРТІБІ</p>
+        <p>6.1. Тараптар арасында туындайтын барлық дауларды келіссөздер арқылы шешеді.</p>
+        <p>6.2. 30 (отыз) күн ішінде келісімге қол жеткізілмеген жағдайда, даулар жауапкерінің орналасқан жері бойынша сотқа жолданады.</p>
+        <p>6.3. Қолданылатын құқық — Қазақстан Республикасының заңнамасы.</p>
+        <p>6.4. Сотқа дейін Тараптар бір-біріне жазбаша нысанда претензия жіберуге міндетті.</p>
+
+        <p class="section-title">7. ОСЫ ШАРТТЫ БҰЗУ</p>
+        <p>7.1. Осы Шарт Тараптардың келісімі бойынша бұзылуы мүмкін.</p>
+        <p>7.2. Тараптардың әрқайсысы екінші Тарапты кем дегенде 30 (отыз) күнтізбелік күн бұрын жазбаша хабардар ете отырып, осы Шартты орындаудан бас тартуға құқылы.</p>
+        <p>7.3. Орындаушы Тапсырыс беруші 10 (он) жұмыс күнінен астам төлем мерзімін бұзған жағдайда осы Шартты біржақты тәртіппен бұзуға құқылы.</p>
+
+        <p class="section-title">8. СЫБАЙЛАС ЖЕМҚОРЛЫҚҚА ҚАРСЫ ІС-ҚИМЫЛ</p>
+        <p>8.1. Тараптар коммерциялық немесе өзге артықшылық алу мақсатында кез келген нысандағы сыйақы ұсынбауға, бермеуге, уәде етпеуге және қабылдамауға міндеттенеді.</p>
+        <p>8.2. Тараптар сыбайлас жемқорлық фактілері туралы білген жағдайда бір-бірін дереу хабардар етуге міндеттенеді.</p>
+        <p>8.3. Сыбайлас жемқорлыққа қарсы ережелерді бұзу осы Шартты бұзуға негіз болып табылады.</p>
+        <p>8.4. Тараптар ҚР «Сыбайлас жемқорлыққа қарсы іс-қимыл туралы» Заңын сақтауға міндеттенеді.</p>
+        <p>8.5. Тараптардың әрқайсысы өз қызметкерлерінің іс-әрекеті үшін жауапкершілік атқарады.</p>
+        <p>8.6. Тараптар осы Шарт шеңберінде алынған ақпараттың құпиялылығын сақтауға міндеттенеді.</p>
+
+        <p class="section-title">9. ҚОРЫТЫНДЫ ЕРЕЖЕЛЕР</p>
+        <p>9.1. Осы Шарт Тараптар қол қойған күннен бастап күшіне енеді және ${fmt(c.period_end)} дейін қолданылады, ал есеп айырысу бөлігінде — міндеттемелер толық орындалғанға дейін.</p>
+        <p>9.2. Осы Шартқа барлық өзгерістер мен толықтырулар жазбаша нысанда ресімделеді және екі Тарап та қол қояды.</p>
+        <p>9.3. Осы Шарт электрондық цифрлық қолтаңба (ЭЦҚ) пайдаланыла отырып қол қойылды, бұл Тараптардың жеке қол қоюымен теңдестіріледі.</p>
+        <p>9.4. Осы Шартта көзделмеген барлық өзге мәселелерде Тараптар Қазақстан Республикасының қолданыстағы заңнамасын басшылыққа алады.</p>
+        <p>9.5. Осы Шарт Тараптардың әрқайсысына бір-бірден теңдей заңды күші бар екі данада жасалды.</p>
+        <p>9.6. Осы Шарттың ажырамас бөліктері болып табылады: Шарттық бағаларды келісу хаттамасы, ГУ-12 нысаны бойынша өтінімдер.</p>
+        <p>9.7. Тараптар электрондық пошта арқылы жіберілген құжаттардың заңды күшін мойындайды.</p>
+        <p>9.8. Осы Шарт WagonFinder платформасында жасалды. Шарттың идентификаторы: ${c.contract_number}.</p>
+        <p>9.9. Осы Шарт орыс және қазақ тілдерінде жасалды, түсіндірмелерде алшақтық туындаған жағдайда орыс тіліндегі мәтін басымдыққа ие болады.</p>
+
+        <p class="section-title">10. ТАРАПТАРДЫҢ ЗАҢДЫ МЕКЕНЖАЙЛАРЫ МЕН БАНКТІК ДЕРЕКТЕМЕЛЕРІ</p>
+        <div class="sig-grid">
+          <div class="sig-col">
+            <strong>Орындаушы:</strong><br/>${c.executor_company}<br/>БСН: ${c.executor_bin}<br/>${c.executor_name}
+            <div class="sig-line"></div>
+            ${c.executor_signed_at ? `<span class="sig-signed">✓ ЭЦҚ қол қойылды ${fmt(c.executor_signed_at)}</span>` : '<span class="sig-label">МО / Қолы</span>'}
+          </div>
+          <div class="sig-col">
+            <strong>Тапсырыс беруші:</strong><br/>${c.customer_company}<br/>БСН: ${c.customer_bin}<br/>${c.customer_name}
+            <div class="sig-line"></div>
+            ${c.customer_signed_at ? `<span class="sig-signed">✓ ЭЦҚ қол қойылды ${fmt(c.customer_signed_at)}</span>` : '<span class="sig-label">МО / Қолы</span>'}
+          </div>
+        </div>
+      </td>
+    </tr></table>
+    <script>window.onload = function(){ window.print(); }</script>
+    </body></html>`;
+
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const iframe = document.createElement('iframe');
+    iframe.style.cssText = 'position:fixed;width:0;height:0;border:0;visibility:hidden';
+    document.body.appendChild(iframe);
+    iframe.src = url;
+    iframe.onload = () => {
+      iframe.contentWindow?.print();
+      setTimeout(() => { document.body.removeChild(iframe); URL.revokeObjectURL(url); }, 2000);
+    };
+  }
 
   const isExecutor = profile.bin === contract.executor_bin;
   const isCustomer = profile.bin === contract.customer_bin;
-
   const mySigned = isExecutor ? !!contract.executor_signed_at : isCustomer ? !!contract.customer_signed_at : false;
   const bothSigned = !!contract.executor_signed_at && !!contract.customer_signed_at;
 
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
+  const canSign = !phone.includes('_') && phone.replace(/\D/g, '').length >= 11 && emailValid;
+
   async function sign() {
+    if (!canSign) return;
     setSigning(true);
+    setSignError('');
     const supabase = createClient();
     const field = isExecutor ? 'executor_signed_at' : 'customer_signed_at';
+    const phoneField = isExecutor ? 'executor_phone' : 'customer_phone';
+    const emailField = isExecutor ? 'executor_email' : 'customer_email';
     const now = new Date().toISOString();
-    const { error } = await supabase.from('contracts').update({ [field]: now }).eq('id', contract.id);
-    if (!error) setContract((c) => ({ ...c, [field]: now }));
+    const otherSigned = isExecutor ? !!contract.customer_signed_at : !!contract.executor_signed_at;
+    const updates: Record<string, string> = { [field]: now, [phoneField]: phone.trim(), [emailField]: email.trim() };
+    if (otherSigned) updates.status = 'signed';
+    const { error } = await supabase.from('contracts').update(updates).eq('id', contract.id);
+    if (error) { setSignError(error.message); } else { setContract((c) => ({ ...c, ...updates })); router.refresh(); }
     setSigning(false);
   }
 
@@ -67,187 +364,495 @@ export function ContractView({ contract: initial, profile }: Props) {
   const city = contract.departure_station.split('-')[0].split(' ')[0];
 
   return (
-    <div className="max-w-4xl mx-auto space-y-5">
+    <div className="h-full flex flex-col min-h-0">
+    <div className="max-w-4xl mx-auto w-full flex flex-col gap-5 h-full min-h-0">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between gap-4 shrink-0">
         <div>
-          <h2 className="text-lg font-semibold text-gray-900">Договор № {contract.contract_number}</h2>
-          <p className="text-sm text-gray-500 mt-0.5">Оказание услуг по предоставлению подвижного состава</p>
+          <h2 className="text-lg font-semibold text-gray-900">{tc('contractNumber')} {contract.contract_number}</h2>
+          <p className="text-sm text-gray-500 mt-0.5">{tc('contractSubtitle')}</p>
+          {/* Signing status — compact chips */}
+          <div className="flex gap-2 mt-2 flex-wrap">
+            {[
+              { label: tc('executor'), company: contract.executor_company, signed_at: contract.executor_signed_at },
+              { label: tc('customer'), company: contract.customer_company,  signed_at: contract.customer_signed_at },
+            ].map(({ label, company, signed_at }) => (
+              <div key={label} className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border ${signed_at ? 'border-green-200 bg-green-50 text-green-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                {signed_at ? <CheckCircle size={11} /> : <Shield size={11} />}
+                <span className="font-medium">{label}:</span>
+                <span>{company}</span>
+                {signed_at && <span className="text-green-500">· {fmt(signed_at)}</span>}
+              </div>
+            ))}
+          </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0">
           {bothSigned && (
             <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 border border-green-200 px-3 py-1.5 rounded-lg">
-              <CheckCircle size={14} /> Договор подписан обеими сторонами
+              <CheckCircle size={14} /> {tc('bothSigned')}
             </div>
+          )}
+          {bothSigned && (
+            <Button variant="secondary" size="sm" onClick={downloadPdf}>
+              <Download size={14} /> {tc('downloadPdf')}
+            </Button>
           )}
         </div>
       </div>
 
-      {/* Signing status */}
-      <div className="grid grid-cols-2 gap-3">
-        {[
-          { label: 'Исполнитель', company: contract.executor_company, name: contract.executor_name, signed_at: contract.executor_signed_at },
-          { label: 'Заказчик',   company: contract.customer_company,  name: contract.customer_name,  signed_at: contract.customer_signed_at },
-        ].map(({ label, company, name, signed_at }) => (
-          <div key={label} className={`rounded-xl border p-4 ${signed_at ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-white'}`}>
-            <div className="text-xs text-gray-500 mb-1">{label}</div>
-            <div className="font-semibold text-gray-900 text-sm">{company}</div>
-            <div className="text-xs text-gray-500">{name}</div>
-            {signed_at ? (
-              <div className="flex items-center gap-1.5 mt-2 text-xs text-green-700">
-                <CheckCircle size={12} /> Подписано {fmt(signed_at)}
+      {/* Contract body — bilingual two-column */}
+      <div id="contract-body" className="flex-1 min-h-0 overflow-y-auto bg-white rounded-xl border border-gray-200 shadow-sm font-serif text-[12px] leading-relaxed text-gray-800">
+        <div className="grid grid-cols-2 divide-x divide-gray-200">
+
+          {/* ── LEFT: Russian ── */}
+          <div className="p-6 space-y-0">
+            <div className="text-center mb-4">
+              <div className="text-sm font-bold uppercase tracking-wide">ДОГОВОР № {contract.contract_number}</div>
+              <div className="text-xs text-gray-600">оказания услуг по предоставлению подвижного состава (контейнера)</div>
+            </div>
+            <div className="flex justify-between mb-3 text-xs text-gray-500">
+              <span>г. {city}</span>
+              <span>«{today.getDate()}» {today.toLocaleDateString('ru-RU', { month: 'long' })} {today.getFullYear()} г.</span>
+            </div>
+
+            <p className="mb-3 text-xs">
+              <strong>«{contract.executor_company}»</strong>, именуемое «<strong>Исполнитель</strong>», БИН {contract.executor_bin}, в лице {contract.executor_name}, и{' '}
+              <strong>«{contract.customer_company}»</strong>, именуемое «<strong>Заказчик</strong>», БИН {contract.customer_bin}, в лице {contract.customer_name},
+              совместно именуемые «Стороны», заключили настоящий Договор о нижеследующем:
+            </p>
+
+            <div className="font-bold text-center mt-4 mb-1 text-xs uppercase tracking-wide">1. Предмет настоящего Договора</div>
+            <p className="mb-1 text-xs">1.1. Исполнитель обязуется выполнять определённые настоящим Договором услуги, связанные с предоставлением вагонов Заказчику, которыми Исполнитель владеет на праве собственности или ином законном основании (далее — Вагоны), для перевозок грузов в международном (экспортном, транзитом) и внутриреспубликанском сообщениях (далее — Услуги), а Заказчик обязуется оплатить Исполнителю Услуги и оплату сбора за нахождение вагонов Исполнителя на подъездных путях, на условиях настоящего Договора.</p>
+            <p className="mb-1 text-xs">1.2. Услуги оказываются на основании заявки на предоставление вагонов по форме ГУ-12, являющейся неотъемлемой частью настоящего Договора. По требованию Заказчика, а также за его счёт Исполнитель может оказывать услуги по оплате провозных платежей (железнодорожный тариф) по территории Республики Казахстан.</p>
+            <p className="mb-1 text-xs">1.3. Стоимость Услуг Исполнителя определяется Сторонами по согласованию и оформляется Протоколом согласования договорных цен, являющимся неотъемлемой частью настоящего Договора. Во внутриреспубликанском сообщении стоимость Услуг определяется по ставкам Прейскуранта Исполнителя.</p>
+            <p className="mb-1 text-xs">1.4. Настоящим Договором Заказчик даёт своё согласие Исполнителю на списание с единого лицевого счёта Заказчика (далее — ЕЛС), открытого в АО «КТЖ–Грузовые перевозки», всех сумм, подлежащих оплате Исполнителю по настоящему Договору, включая суммы неустойки.</p>
+            <p className="mb-1 text-xs">1.5. Деятельность Сторон регламентируется: Соглашением о международном Грузовом Сообщении (СМГС); Тарифной политикой железных дорог государств-участников СНГ; Тарифным руководством, действующим на дату оказания услуг; Законом РК от 8 декабря 2001 года № 266-II «О железнодорожном транспорте»; Правилами перевозок грузов (Приказ от 02 августа 2019 года № 612); Правилами предоставления услуг оператора вагонов (контейнеров), утверждёнными Приказом от 19 октября 2012 года № 709; условиями настоящего Договора и другими нормативно-правовыми актами РК.</p>
+            <p className="mb-1 text-xs">1.6. Термины: <em>Вагон</em> — несамоходное транспортное средство, которым Исполнитель владеет на праве собственности или ином законном основании. <em>Грузополучатель</em> — лицо, получающее груз, указанное в перевозочных документах. <em>Грузоотправитель</em> — лицо, отправляющее груз. <em>Простаивающий Вагон</em> — Вагон, задержанный на промежуточных станциях по независящим от Исполнителя причинам.</p>
+            <p className="mb-3 text-xs">Подвижной состав по настоящему Договору: {
+              (contract.contract_wagons && contract.contract_wagons.length > 0
+                ? contract.contract_wagons
+                : contract.wagon_number ? [{ id: '', wagon_number: contract.wagon_number, wagon_type: contract.wagon_type ?? '' }] : []
+              ).map((w, i) => (
+                <span key={w.id || i}>{i > 0 ? ', ' : ''}<strong>{w.wagon_number}</strong> ({WAGON_TYPE_LABELS[w.wagon_type] ?? w.wagon_type})</span>
+              ))
+            }. Груз: <strong>{contract.cargo_name}</strong> (ЕТСНГ: {contract.cargo_etsng}). Маршрут: <strong>{contract.departure_station} → {contract.arrival_station}</strong>. Период подачи: <strong>{fmt(contract.period_start)} – {fmt(contract.period_end)}</strong>.</p>
+
+            <div className="font-bold text-center mt-4 mb-1 text-xs uppercase tracking-wide">2. Права и обязанности Сторон</div>
+            <p className="mb-1 text-xs"><strong>2.1. Исполнитель обязан:</strong></p>
+            <p className="mb-1 text-xs">2.1.1. Качественно и своевременно оказывать Услуги при условии выполнения Заказчиком всех норм настоящего Договора.</p>
+            <p className="mb-1 text-xs">2.1.2. В международном сообщении предоставлять Заказчику инструкцию по заполнению железнодорожной транспортной накладной при условии выполнения Заказчиком обязательств по настоящему Договору.</p>
+            <p className="mb-1 text-xs">2.1.3. Уведомлять Заказчика об изменении стоимости Услуг за 15 (пятнадцать) календарных дней до даты вступления в силу изменений путём направления уведомления или публикации на сайте Исполнителя. Изменения вступают в силу после истечения указанного срока и не требуют подписания дополнительных соглашений.</p>
+            <p className="mb-1 text-xs">2.1.4. Обеспечить Заказчика технически исправными, коммерчески пригодными Вагонами на станции погрузки в соответствии с согласованным объёмом перевозок и произведённой оплатой.</p>
+            <p className="mb-1 text-xs">2.1.5. Информировать Заказчика обо всех обстоятельствах, препятствующих надлежащему оказанию Услуг, и в пределах своей компетенции принимать меры к устранению таких обстоятельств.</p>
+            <p className="mb-1 text-xs">2.1.6. Информировать Заказчика путём публикации на сайте о действующем порядке и тарифах взыскания сбора за нахождение Вагонов на железнодорожных подъездных путях.</p>
+            <p className="mb-2 text-xs">2.1.7. Информировать Заказчика о простое Вагонов, простаивающих по его вине в пути следования.</p>
+            <p className="mb-1 text-xs"><strong>2.2. Заказчик обязан:</strong></p>
+            <p className="mb-1 text-xs">2.2.1. Осуществлять подекадное планирование отгрузок путём направления Исполнителю заявки с указанием № плана перевозок (при наличии ГУ-12) до 10-го числа предшествующего месяца. Заказчик обязуется подавать Перевозчику заявки по форме ГУ-12 с обязательным указанием Исполнителя в качестве владельца подвижного состава.</p>
+            <p className="mb-1 text-xs">2.2.2. Оплатить Исполнителю стоимость Услуг, определённую Сторонами в соответствии с пунктом 1.3. настоящего Договора.</p>
+            <p className="mb-1 text-xs">2.2.3. В течение 5 (пяти) рабочих дней с даты оформления перевозочных документов направлять отгрузочную информацию: номер отправки, номер вагона, дата погрузки, станция отправления, станция назначения, грузоотправитель, наименование груза.</p>
+            <p className="mb-1 text-xs">2.2.4. При перевозках в международном сообщении обеспечить оформление перевозочных документов согласно требованиям СМГС и инструкций Исполнителя, а также оплату провозных платежей.</p>
+            <p className="mb-1 text-xs">2.2.5. Обеспечить за пределами станций Перевозчика срок нахождения Вагонов Исполнителя на станциях назначения — не более 2 (двух) суток, если иное не установлено Протоколом.</p>
+            <p className="mb-1 text-xs">2.2.6. Обеспечить заключение грузоотправителями/грузополучателями договора оказания услуг оператора вагонов для оплаты сбора Исполнителя за нахождение вагонов на подъездных путях АО «НК «Қазақстан темiр жолы». Оплата сбора свыше 1 (одних) суток производится на основании ведомости подачи и уборки вагонов формы ГУ-46.</p>
+            <p className="mb-1 text-xs">2.2.7. В случае неисполнения пункта 2.2.6. ответственность сбора переходит на Заказчика. Исполнитель вправе отказать в предоставлении услуг до погашения задолженности. Заказчик оплатит все понесённые Исполнителем расходы, связанные с простоем Вагонов в пути следования по вине Заказчика.</p>
+            <p className="mb-1 text-xs">2.2.8. Производить оплату неустойки на основании Акта общей формы (ГУ-23) в случае простоя Вагонов на станционных и магистральных путях по вине Заказчика.</p>
+            <p className="mb-1 text-xs">2.2.9. Обеспечить очистку вагонов от остатков груза, а при необходимости промывку в соответствии с Правилами перевозок (Приказ от 02 августа 2019 года № 612) после выгрузки грузов.</p>
+            <p className="mb-1 text-xs">2.2.10. Оплатить Исполнителю понесённые расходы в связи с неисполнением пунктов 2.2.6. и 2.2.9.</p>
+            <p className="mb-1 text-xs">2.2.11. В случае отказа от погрузки по согласованной Заявке уведомить Исполнителя за 7 (семь) рабочих дней в письменной форме.</p>
+            <p className="mb-1 text-xs">2.2.12. В случае нарушения пункта 2.2.11. оплатить Исполнителю штраф в размере 10% от суммы отказного объёма перевозок, но не более 500 (пятисот) МРП, а также возместить документально подтверждённые расходы Исполнителя.</p>
+            <p className="mb-1 text-xs">2.2.13. Не допускать курсирование маршрутов и переадресовки Вагонов без согласования Исполнителя.</p>
+            <p className="mb-1 text-xs">2.2.14. Оплатить причитающиеся платежи Исполнителю для совершения переадресовки Вагонов.</p>
+            <p className="mb-1 text-xs">2.2.15. Оплатить Исполнителю понесённые расходы в полном объёме, штраф за использование Вагонов без согласования в двойном размере от действующей тарифной ставки Исполнителя на задействованном направлении перевозки.</p>
+            <p className="mb-1 text-xs">2.2.16. Обеспечить наличие денежных средств на ЕЛС, открытом у Перевозчика, в объёме, достаточном для осуществления расчётов с Исполнителем.</p>
+            <p className="mb-1 text-xs">2.2.17. Обеспечить сохранность Вагонов Исполнителя в период нахождения Вагонов на подъездных путях в период осуществления грузовых и иных операций.</p>
+            <p className="mb-1 text-xs">2.2.18. Использовать вагоны Исполнителя только для согласованных Сторонами перевозок.</p>
+            <p className="mb-1 text-xs">2.2.19. Оплатить Исполнителю штраф в размере 12 500 (двенадцать тысяч пятьсот) тенге за превышение сроков, указанных в подпункте 2.2.5., за каждый вагон в сутки. При этом неполные сутки считаются как полные.</p>
+            <p className="mb-1 text-xs">2.2.20. В случае нарушения пунктов 2.2.15. и 2.2.18. оплатить Исполнителю штраф в размере 12 500 (двенадцать тысяч пятьсот) тенге за каждый вагон в сутки использования Вагонов в несогласованных перевозках до момента возврата Вагонов на указанную Исполнителем станцию.</p>
+            <p className="mb-1 text-xs">2.2.21. Обеспечить лицензирование, декларирование груза и/или получение других официальных разрешений от уполномоченных органов, необходимых для осуществления перевозки, погрузки, выгрузки.</p>
+            <p className="mb-1 text-xs">2.2.22. Предоставлять Исполнителю по запросу в указанные сроки оригиналы и/или копии перевозочных документов, доверенностей, актов общей формы и других документов, необходимых для урегулирования спорных вопросов.</p>
+            <p className="mb-1 text-xs">2.2.23. Передать Грузополучателю в международном сообщении инструкцию Исполнителя по отправке порожнего Вагона на каждый отправляемый Вагон.</p>
+            <p className="mb-1 text-xs">2.2.24. Принять участие в составлении акта общей формы ГУ-23 при прибытии под погрузку/выгрузку повреждённого или неисправного Вагона, а также незамедлительно уведомить Исполнителя.</p>
+            <p className="mb-1 text-xs">2.2.25. Возместить Исполнителю все расходы, связанные с оформлением перевозочных документов не в соответствии с инструкцией Исполнителя.</p>
+            <p className="mb-1 text-xs">2.2.26. Возместить Исполнителю иные документально подтверждённые расходы, возникшие в результате невыполнения Заказчиком, грузоотправителем или грузополучателем Правил перевозки грузов, СМГС и других нормативных документов, в том числе уплаченные Исполнителем штрафы и сборы.</p>
+            <p className="mb-1 text-xs">2.2.27. Оплатить Исполнителю штраф в размере 12 500 (двенадцать тысяч пятьсот) тенге за каждые сутки в пути следования с даты отправления Вагона со станции выгрузки по несогласованному маршруту до момента его прибытия на согласованную с Исполнителем станцию.</p>
+            <p className="mb-1 text-xs">2.2.28. Предоставлять не позднее 10 (десяти) календарных дней до начала планируемой погрузки заявки на предоставление вагонов. Оригиналы заявок, скреплённых печатью, предоставлять в течение 15 (пятнадцати) календарных дней после окончания отчётного месяца перевозок.</p>
+            <p className="mb-1 text-xs">2.2.29. За 5 (пять) дней до начала декады в обязательном порядке направлять Исполнителю график подачи вагонов, соответствующий данным ГУ-11/ГУ-12. Корректировка возможна за 5 (пять) дней до начала декады.</p>
+            <p className="mb-2 text-xs">2.2.30. Осуществлять подготовку вагонов под погрузку за свой счёт.</p>
+            <p className="mb-1 text-xs"><strong>2.3. Исполнитель вправе:</strong></p>
+            <p className="mb-1 text-xs">2.3.1. Изменять стоимость Услуг, предварительно уведомив Заказчика согласно подпункту 2.1.3., в случае введения новых тарифов, сборов, штрафов, устанавливаемых перевозчиками или государственными органами. При этом не подлежит изменению стоимость Услуг на перевозки грузов, находящихся в пути следования на момент изменения.</p>
+            <p className="mb-1 text-xs">2.3.2. Требовать своевременную оплату Услуг и оплату иных расходов, возникших по вине Заказчика.</p>
+            <p className="mb-1 text-xs">2.3.3. Приостановить оказание Услуг либо не приступать к исполнению обязательств в случае невыполнения или ненадлежащего исполнения Заказчиком условий настоящего Договора.</p>
+            <p className="mb-1 text-xs">2.3.4. Расторгнуть Договор в одностороннем порядке в случаях неоднократного нарушения Заказчиком условий настоящего Договора, предварительно уведомив Заказчика не менее чем за 15 (пятнадцать) календарных дней.</p>
+            <p className="mb-2 text-xs">2.3.5. При наличии задолженности Заказчика Исполнитель вправе остановить вагоны в пути следования путём направления соответствующего уведомления в АО «КТЖ-Грузовые перевозки» до полного погашения задолженности.</p>
+            <p className="mb-1 text-xs"><strong>2.4. Заказчик вправе:</strong></p>
+            <p className="mb-1 text-xs">2.4.1. Требовать оказания Услуг в соответствии с условиями, установленными настоящим Договором.</p>
+            <p className="mb-1 text-xs">2.4.2. Изменить маршрут следования вагонов с грузом (переадресовка) только при наличии официального согласия Исполнителя и осуществлённой соответствующей оплаты.</p>
+            <p className="mb-1 text-xs">2.4.3. Своевременно и полностью осуществлять оплату стоимости Услуг Исполнителя в соответствии с условиями Договора.</p>
+            <p className="mb-1 text-xs">2.4.4. Требовать от Исполнителя предоставления инструкции по заполнению железнодорожной транспортной накладной в международном сообщении.</p>
+            <p className="mb-1 text-xs">2.4.5. Получать от Исполнителя уведомления об изменении стоимости Услуг за 15 (пятнадцать) календарных дней до вступления в силу изменений.</p>
+            <p className="mb-3 text-xs">2.4.6. Требовать от Исполнителя обеспечения технически исправными, коммерчески пригодными вагонами на станции погрузки в соответствии с заявкой и произведённой оплатой.</p>
+
+            <div className="font-bold text-center mt-4 mb-1 text-xs uppercase tracking-wide">3. Стоимость услуг и порядок расчётов</div>
+            <p className="mb-1 text-xs">3.1. Заказчик производит 100% (стопроцентную) предварительную оплату Услуг на расчётный счёт Исполнителя не позднее 2 (двух) рабочих дней после подачи Заявки, если иное не предусмотрено Исполнителем. При оплате через товарные кассы Перевозчика Заказчик обеспечивает наличие на ЕЛС средств, достаточных для расчётов с Исполнителем. Оплату сбора за нахождение вагонов на подъездных путях Заказчик также осуществляет с ЕЛС.</p>
+            <p className="mb-1 text-xs">3.2. Валютой расчётов и платежей по настоящему Договору является национальная валюта Республики Казахстан — тенге. Счета-фактуры выставляются в тенге.</p>
+            <p className="mb-1 text-xs">3.3. Исполнитель не позднее 10 (десятого) числа месяца, следующего за отчётным, предоставляет Заказчику: акт выполненных работ (форма Р-1), счёт-фактуру в электронной форме, расчётную ведомость к Акту Р-1. Акт Р-1 подписывается Заказчиком и возвращается Исполнителю в течение 3 (трёх) календарных дней с даты получения или предоставляется мотивированный отказ. В случае отсутствия мотивированного отказа Услуги считаются принятыми Заказчиком в полном объёме. При превышении суммы услуг над предоплатой Заказчик производит доплату в течение 3 (трёх) рабочих дней. При наличии остатка Исполнитель вправе засчитать его в счёт будущих услуг или вернуть в течение 15 (пятнадцати) рабочих дней.</p>
+            <p className="mb-1 text-xs">3.4. В случае возражений к суммам в Акте Р-1 Заказчик направляет письменную претензию. Исполнитель рассматривает её в течение 1 (одного) месяца и направляет ответ в письменном виде. При удовлетворении претензии оформляется корректировочная счёт-фактура.</p>
+            <p className="mb-1 text-xs">3.5. При повреждении Вагонов Заказчик обязан произвести ремонт в специализированной организации либо возместить полную стоимость ремонта (включая стоимость вновь установленных узлов и деталей, а также работ по их установке), затраты по железнодорожному тарифу на отправку Вагонов в ремонт и из ремонта в течение 5 (пяти) календарных дней. Заказчик также уплачивает штраф 12 500 (двенадцать тысяч пятьсот) тенге за каждые сутки нахождения Вагона в нерабочем парке.</p>
+            <p className="mb-3 text-xs">3.6. При осуществлении платежей все банковские расходы, связанные с перечислением денег, несёт Сторона, осуществляющая платежи.</p>
+
+            <div className="font-bold text-center mt-4 mb-1 text-xs uppercase tracking-wide">4. Ответственность Сторон</div>
+            <p className="mb-1 text-xs">4.1. В случае непредоставления Заказчиком информации в соответствии с подпунктом 2.2.3. Исполнитель самостоятельно начисляет платежи за оказанные Услуги на основании оперативных данных. При наложении административного взыскания на Исполнителя за нарушение порядка выписки счетов-фактур Заказчик возмещает его в полном объёме, вне зависимости от срока обнаружения.</p>
+            <p className="mb-1 text-xs">4.2. При исчислении сроков нахождения вагонов на станциях назначения и отправления Исполнитель использует оперативные данные в соответствии с пунктом 9.3. настоящего Договора.</p>
+            <p className="mb-1 text-xs">4.3. Признанная Заказчиком сумма неустойки удерживается Исполнителем из суммы предоплаты.</p>
+            <p className="mb-1 text-xs">4.4. Заказчик несёт ответственность за полноту и достоверность информации, указанной в Заявке.</p>
+            <p className="mb-1 text-xs">4.5. Заказчик несёт ответственность за техническое состояние и сохранность всех узлов и деталей вагонов на территории РК с момента приёма до момента сдачи вагонов Перевозчику. За повреждение или утрату подвижного состава с Заказчика взыскивается стоимость утраченного вагона или необходимого ремонта, а также штраф в размере 50% (пятидесяти процентов) стоимости утраченного имущества или ремонта. За пределами РК ответственность определяется на основании Правил пользования грузовыми вагонами в международном сообщении (ПГВ).</p>
+            <p className="mb-1 text-xs">4.6. В случае ненадлежащего исполнения обязательств Стороны несут ответственность в соответствии с законодательством Республики Казахстан по вопросам железнодорожного транспорта.</p>
+            <p className="mb-1 text-xs">4.7. В случае возникновения дебиторской задолженности Заказчику необходимо произвести оплату в течение 3 (трёх) рабочих дней с даты уведомления от Исполнителя. За нарушение Исполнитель начисляет пеню в размере 0,1% от суммы задолженности за каждый день просрочки, но не более 10% от общей суммы задолженности.</p>
+            <p className="mb-1 text-xs">4.8. В случае ненадлежащего исполнения Заказчиком своих обязательств Исполнитель вправе приостановить оказание Услуг, предварительно уведомив Заказчика за 1 (один) рабочий день. При этом все штрафные санкции, связанные с приостановкой, оплачивает Заказчик.</p>
+            <p className="mb-1 text-xs">4.9. В случае ненадлежащего исполнения Заказчиком обязательств по пунктам 2.2.8., 2.2.10., 2.2.17., 2.2.20., 2.2.25. и 2.2.26. Заказчик обязан уплатить пеню в размере 0,1% от суммы штрафа за каждый день просрочки, но не более 10% от общей суммы задолженности. Погашение: сначала неустойка, затем основной долг.</p>
+            <p className="mb-1 text-xs">4.10. Заказчик в случае отказа от предоставления Услуг согласно пункту 2.2.12. обязан возместить расходы Исполнителя за порожний пробег вагонов, отправить за свой счёт порожние вагоны на станцию, указанную Исполнителем, а также уплатить неустойку в размере 12 500 (двенадцать тысяч пятьсот) тенге в двойном размере за каждый вагон в сутки до прибытия вагонов на указанную Исполнителем станцию. Неполные сутки считаются как полные.</p>
+            <p className="mb-1 text-xs">4.11. В случае нахождения вагонов на станциях свыше сроков, установленных подпунктом 2.2.19., Исполнитель не несёт ответственности за несвоевременное предоставление вагонов. При согласовании заявки ГУ-12 Перевозчиком без участия Исполнителя, Исполнитель не несёт ответственности за необеспечение Заказчика вагонами.</p>
+            <p className="mb-3 text-xs">4.12. В случаях, не предусмотренных настоящим Договором, Стороны несут ответственность в соответствии с действующим законодательством Республики Казахстан.</p>
+
+            <div className="font-bold text-center mt-4 mb-1 text-xs uppercase tracking-wide">5. Обстоятельства непреодолимой силы</div>
+            <p className="mb-1 text-xs">5.1. Стороны освобождаются от ответственности за невыполнение или задержку в выполнении любого предусмотренного настоящим Договором обязательства в случае наступления обстоятельств непреодолимой силы, а именно: стихийных бедствий, военных действий любого характера, блокад, массовых беспорядков, решений государственных органов, железнодорожных администраций.</p>
+            <p className="mb-1 text-xs">5.2. Сторона, для которой создалась невозможность исполнения своих обязательств, должна в течение 5 (пяти) рабочих дней со дня возникновения обстоятельств непреодолимой силы известить другую Сторону о дате их наступления.</p>
+            <p className="mb-1 text-xs">5.3. Надлежащим доказательством наличия обстоятельств непреодолимой силы служат справки уполномоченного органа/организации страны, где данные обстоятельства имели место.</p>
+            <p className="mb-1 text-xs">5.4. Неуведомление или несвоевременное уведомление, а также неподтверждение факта наступления обстоятельств непреодолимой силы лишает Сторону права ссылаться на указанные обстоятельства как на основание, освобождающее от ответственности.</p>
+            <p className="mb-3 text-xs">5.5. Если обстоятельства непреодолимой силы имеют место более 30 (тридцати) календарных дней, каждая Сторона вправе отказаться от исполнения обязательств по Договору, и в этом случае ни одна из Сторон не вправе требовать от другой возмещения убытков, причинённых расторжением Договора.</p>
+
+            <div className="font-bold text-center mt-4 mb-1 text-xs uppercase tracking-wide">6. Порядок разрешения споров</div>
+            <p className="mb-1 text-xs">6.1. Споры и разногласия, возникшие при исполнении условий Договора, разрешаются Сторонами путём переговоров.</p>
+            <p className="mb-1 text-xs">6.2. До передачи дела в суд обязателен претензионный порядок разрешения спора. Претензия должна быть предъявлена в письменной форме.</p>
+            <p className="mb-1 text-xs">6.3. Сторона, получившая претензию, обязана её рассмотреть и дать ответ в течение 30 (тридцати) календарных дней с даты её получения.</p>
+            <p className="mb-3 text-xs">6.4. В случае недостижения взаимоприемлемого результата разногласия подлежат рассмотрению в судебном порядке по месту нахождения Исполнителя в соответствии с действующим законодательством Республики Казахстан.</p>
+
+            <div className="font-bold text-center mt-4 mb-1 text-xs uppercase tracking-wide">7. Расторжение настоящего Договора</div>
+            <p className="mb-1 text-xs">7.1. Настоящий Договор может быть досрочно расторгнут по соглашению Сторон, в случаях, предусмотренных настоящим Договором и законодательством РК, или в одностороннем порядке.</p>
+            <p className="mb-1 text-xs">7.2. Сторона вправе досрочно расторгнуть настоящий Договор при условии письменного уведомления другой Стороны не менее чем за 15 (пятнадцать) календарных дней до предполагаемой даты расторжения. Настоящий Договор считается расторгнутым после проведения всех взаиморасчётов.</p>
+            <p className="mb-3 text-xs">7.3. В случае фактического осуществления Заказчиком предварительной оплаты при расторжении Договора Исполнитель возвращает Заказчику сумму предварительной оплаты за минусом документально подтверждённых расходов Исполнителя и стоимости фактически оказанных Услуг в течение 20 (двадцати) рабочих дней. Если сумма предоплаты меньше суммы расходов и неустойки, Заказчик производит доплату в течение 20 (двадцати) рабочих дней.</p>
+
+            <div className="font-bold text-center mt-4 mb-1 text-xs uppercase tracking-wide">8. Противодействие коррупции</div>
+            <p className="mb-1 text-xs">8.1. При исполнении своих обязательств по настоящему Договору Стороны и их работники не выплачивают, не предлагают выплатить и не разрешают выплату каких-либо денежных средств или ценностей, прямо или косвенно, любым лицам для оказания влияния на их действия с целью получить неправомерные преимущества.</p>
+            <p className="mb-1 text-xs">8.2. При исполнении обязательств по настоящему Договору Стороны и их работники не осуществляют действия, квалифицируемые применимым законодательством как дача/получение взятки, коммерческий подкуп, а также действия, нарушающие требования законодательства и международных актов о противодействии легализации доходов, полученных преступным путём.</p>
+            <p className="mb-1 text-xs">8.3. Каждая из Сторон отказывается от стимулирования работников другой Стороны путём предоставления денежных сумм, подарков, безвозмездного выполнения работ (услуг) и иными способами, направленными на обеспечение этим работником действий в пользу стимулирующей Стороны.</p>
+            <p className="mb-1 text-xs">8.4. В случае возникновения у Стороны подозрений в нарушении антикоррупционных условий, соответствующая Сторона обязуется уведомить другую Сторону в письменной форме.</p>
+            <p className="mb-1 text-xs">8.5. В письменном уведомлении Сторона обязана сослаться на факты, достоверно подтверждающие или дающие основание предполагать нарушение контрагентом, его работниками применимого законодательства по вопросам коррупции.</p>
+            <p className="mb-3 text-xs">8.6. Стороны настоящего Договора признают проведение процедур по предотвращению коррупции и контролируют их соблюдение. Стороны прилагают разумные усилия для минимизации рисков деловых отношений с контрагентами, вовлечёнными в коррупционную деятельность, и оказывают взаимное содействие в целях предотвращения коррупции.</p>
+
+            <div className="font-bold text-center mt-4 mb-1 text-xs uppercase tracking-wide">9. Заключительные положения</div>
+            <p className="mb-1 text-xs">9.1. Настоящий Договор вступает в силу с даты подписания Сторонами и действует до {fmt(contract.period_end)}, а в части взаиморасчётов — до момента полного исполнения Сторонами своих обязательств. Договор может быть подписан путём обмена Сторонами цветными сканированными копиями посредством электронной почты, которые приравниваются к оригиналу Договора. При этом Заказчик обязуется направить в адрес Исполнителя оригинал подписанного договора.</p>
+            <p className="mb-1 text-xs">9.2. Срок действия настоящего Договора продлевается на следующий календарный год, если ни одна из Сторон не позднее чем за 30 (тридцать) календарных дней до окончания срока действия письменно не уведомит другую Сторону о намерении расторгнуть настоящий Договор.</p>
+            <p className="mb-1 text-xs">9.3. Данные о вагонах, используемые в рамках исполнения настоящего Договора, определяются согласно информационным данным Исполнителя.</p>
+            <p className="mb-1 text-xs">9.4. Условия настоящего Договора являются конфиденциальными для любой третьей стороны и не подлежат разглашению без письменного согласия другой Стороны, кроме случаев, предусмотренных законодательством Республики Казахстан.</p>
+            <p className="mb-1 text-xs">9.5. Все изменения и дополнения к настоящему Договору должны быть совершены в письменной форме, подписаны уполномоченными представителями Сторон с проставлением оттисков печатей. Изменения, совершённые в надлежащей форме, являются неотъемлемой частью настоящего Договора.</p>
+            <p className="mb-1 text-xs">9.6. Права и обязанности Сторон по настоящему Договору не могут быть переданы третьим лицам без письменного согласия другой Стороны.</p>
+            <p className="mb-1 text-xs">9.7. Все уведомления, заявки и другие сообщения, передаваемые посредством факсимильной или электронной связи, имеют юридическую силу при условии последующего направления оригиналов лично или курьерской почтой.</p>
+            <p className="mb-1 text-xs">9.8. Настоящий Договор составлен в двух идентичных экземплярах на русском языке, имеющих одинаковую юридическую силу, по одному для каждой из Сторон. Договор заключён на платформе WagonFinder, идентификатор: {contract.contract_number}.</p>
+            <p className="mb-3 text-xs">9.9. Договора, дополнительные соглашения, счета, протоколы, акты, переданные посредством факсимильной связи или по электронной почте, имеют юридическую силу до момента замены их оригиналами.</p>
+
+            <div className="font-bold text-center mt-4 mb-2 text-xs uppercase tracking-wide">10. Юридические адреса и банковские реквизиты Сторон</div>
+            <div className="grid grid-cols-2 gap-4 pt-3 border-t border-gray-200 text-xs">
+              <div>
+                <div className="font-bold mb-1">Исполнитель:</div>
+                <div>{contract.executor_company}</div>
+                <div className="text-gray-500">БИН: {contract.executor_bin}</div>
+                <div className="text-gray-500">{contract.executor_name}</div>
+                {contract.executor_signed_at ? (
+                  <>
+                    {contract.executor_phone && <div className="text-gray-500">Тел: {contract.executor_phone}</div>}
+                    {contract.executor_email && <div className="text-gray-500">Email: {contract.executor_email}</div>}
+                  </>
+                ) : isExecutor ? (
+                  <div className="mt-1 space-y-1">
+                    <IMaskInput mask="+7 (000) 000-00-00" value={phone} onAccept={(v: string) => setPhone(v)} lazy={false} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 bg-white" />
+                    <div>
+                      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} onBlur={() => setEmailTouched(true)} placeholder="example@company.kz" className={`w-full border rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 bg-white ${emailTouched && !emailValid ? 'border-red-400 focus:ring-red-300' : 'border-gray-300 focus:ring-blue-300'}`} />
+                      {emailTouched && !emailValid && <div className="text-[10px] text-red-500 mt-0.5">Введите корректный email (example@company.kz)</div>}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-1 space-y-1">
+                    <div className="border border-dashed border-gray-300 rounded px-2 py-1 text-xs text-gray-400">Телефон</div>
+                    <div className="border border-dashed border-gray-300 rounded px-2 py-1 text-xs text-gray-400">Email</div>
+                  </div>
+                )}
+                <div className="mt-3 h-8 border-b border-dashed border-gray-300 flex items-end pb-0.5">
+                  {contract.executor_signed_at && <span className="text-green-700 flex items-center gap-1"><Shield size={10} /> ЭЦП {fmt(contract.executor_signed_at)}</span>}
+                </div>
+                <div className="text-gray-400 text-[10px] mt-0.5">МП / Подпись</div>
               </div>
-            ) : (
-              <div className="text-xs text-amber-600 mt-2">Ожидает подписи</div>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {/* Contract body */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-8 font-serif text-[14px] leading-relaxed text-gray-800">
-        <div className="text-center mb-6">
-          <div className="text-base font-bold uppercase tracking-wide">ДОГОВОР</div>
-          <div className="text-sm">оказания услуг по предоставлению подвижного состава</div>
-        </div>
-
-        <div className="flex justify-between mb-6 text-sm">
-          <span>г. {city}</span>
-          <span>«{today.getDate()}» {today.toLocaleDateString('ru-RU', { month: 'long' })} {today.getFullYear()} год</span>
-        </div>
-
-        <p className="mb-4">
-          <strong>«{contract.executor_company}»</strong>, именуемое в дальнейшем «<strong>Исполнитель</strong>»,
-          в лице {contract.executor_name}, БИН {contract.executor_bin}, с одной стороны, и{' '}
-          <strong>«{contract.customer_company}»</strong>, именуемое в дальнейшем «<strong>Заказчик</strong>»,
-          в лице {contract.customer_name}, БИН {contract.customer_bin}, с другой стороны,
-          совместно именуемые «Стороны», заключили настоящий Договор о нижеследующем.
-        </p>
-
-        <div className="font-bold text-center mt-5 mb-2">1. Предмет настоящего Договора</div>
-        <p className="mb-3">
-          1.1. Исполнитель обязуется предоставить Заказчику вагон(ы) для перевозки грузов во
-          внутриреспубликанском и международном сообщениях, а Заказчик обязуется оплатить Исполнителю
-          оказанные услуги.
-        </p>
-        <p className="mb-3">
-          1.2. Предоставляемый подвижной состав:
-        </p>
-        <div className="ml-4 mb-3 space-y-1 text-sm">
-          <div>• Номер вагона: <strong>{contract.wagon_number}</strong></div>
-          <div>• Тип вагона: <strong>{WAGON_TYPE_LABELS[contract.wagon_type] ?? contract.wagon_type}</strong></div>
-          <div>• Наименование груза: <strong>{contract.cargo_name}</strong> (ЕТСНГ: {contract.cargo_etsng})</div>
-          <div>• Маршрут: <strong>{contract.departure_station}</strong> → <strong>{contract.arrival_station}</strong></div>
-          <div>• Период: <strong>{fmt(contract.period_start)}</strong> – <strong>{fmt(contract.period_end)}</strong></div>
-        </div>
-        <p className="mb-3">
-          1.3. Стоимость услуг Исполнителя определяется Сторонами по согласованию и оформляется
-          отдельным Протоколом, являющимся неотъемлемой частью настоящего Договора.
-        </p>
-
-        <div className="font-bold text-center mt-5 mb-2">2. Права и обязанности Сторон</div>
-        <p className="mb-2">2.1. <strong>Исполнитель обязан:</strong></p>
-        <div className="ml-4 mb-3 space-y-1 text-sm">
-          <p>2.1.1. Своевременно и качественно оказывать услуги при условии выполнения Заказчиком всех норм настоящего Договора.</p>
-          <p>2.1.2. Обеспечить Заказчика технически исправными, коммерчески пригодными вагонами на станции погрузки.</p>
-          <p>2.1.3. Информировать Заказчика об изменении стоимости услуг за 15 (пятнадцать) календарных дней.</p>
-        </div>
-        <p className="mb-2">2.2. <strong>Заказчик обязан:</strong></p>
-        <div className="ml-4 mb-3 space-y-1 text-sm">
-          <p>2.2.1. Подавать Перевозчику заявки по форме ГУ-12 с указанием Исполнителя в качестве владельца подвижного состава.</p>
-          <p>2.2.2. Оплатить Исполнителю стоимость услуг в соответствии с настоящим Договором.</p>
-          <p>2.2.3. Обеспечить срок нахождения вагонов на станциях назначения не более 2 (двух) суток.</p>
-          <p>2.2.4. Обеспечить очистку вагонов от остатков груза после выгрузки.</p>
-          <p>2.2.5. В случае отказа от погрузки по согласованной заявке уведомить за 7 (семь) рабочих дней.</p>
-        </div>
-
-        <div className="font-bold text-center mt-5 mb-2">3. Стоимость услуг и порядок расчётов</div>
-        <p className="mb-3 text-sm">
-          3.1. Заказчик производит 100% предварительную оплату услуг на расчётный счёт Исполнителя
-          не позднее 2 (двух) рабочих дней после подачи заявки. Валютой расчётов является
-          национальная валюта Республики Казахстан — тенге.
-        </p>
-        <p className="mb-3 text-sm">
-          3.2. В случае превышения сроков нахождения вагонов на станциях Заказчик уплачивает штраф
-          в размере 12 500 (двенадцать тысяч пятьсот) тенге за каждый вагон в сутки.
-        </p>
-
-        <div className="font-bold text-center mt-5 mb-2">4. Ответственность Сторон</div>
-        <p className="mb-3 text-sm">
-          4.1. В случае ненадлежащего исполнения обязательств Стороны несут ответственность
-          в соответствии с законодательством Республики Казахстан.
-        </p>
-        <p className="mb-3 text-sm">
-          4.2. За нарушение сроков оплаты начисляется пеня в размере 0,1% от суммы задолженности
-          за каждый день просрочки, но не более 10% от общей суммы задолженности.
-        </p>
-
-        <div className="font-bold text-center mt-5 mb-2">5. Заключительные положения</div>
-        <p className="mb-3 text-sm">
-          5.1. Настоящий Договор вступает в силу с даты подписания обеими Сторонами и действует
-          до {fmt(contract.period_end)}, а в части взаиморасчётов — до полного исполнения обязательств.
-        </p>
-        <p className="mb-3 text-sm">
-          5.2. Договор составлен в электронном виде и подписан с использованием электронной
-          цифровой подписи (ЭЦП) каждой из Сторон, что приравнивается к собственноручной подписи
-          в соответствии с законодательством Республики Казахстан.
-        </p>
-        <p className="mb-6 text-sm">
-          5.3. Споры разрешаются путём переговоров, при недостижении согласия — в судебном
-          порядке по месту нахождения Исполнителя.
-        </p>
-
-        {/* Signatures block */}
-        <div className="grid grid-cols-2 gap-8 mt-8 pt-6 border-t border-gray-200 text-sm">
-          <div>
-            <div className="font-bold mb-3">Исполнитель:</div>
-            <div>{contract.executor_company}</div>
-            <div className="text-gray-500">БИН: {contract.executor_bin}</div>
-            <div className="text-gray-500 mt-1">{contract.executor_name}</div>
-            <div className="mt-4 h-10 border-b border-dashed border-gray-300 flex items-end pb-1">
-              {contract.executor_signed_at && (
-                <span className="text-green-700 text-xs flex items-center gap-1">
-                  <Shield size={11} /> ЭЦП подписано {fmt(contract.executor_signed_at)}
-                </span>
-              )}
+              <div>
+                <div className="font-bold mb-1">Заказчик:</div>
+                <div>{contract.customer_company}</div>
+                <div className="text-gray-500">БИН: {contract.customer_bin}</div>
+                <div className="text-gray-500">{contract.customer_name}</div>
+                {contract.customer_signed_at ? (
+                  <>
+                    {contract.customer_phone && <div className="text-gray-500">Тел: {contract.customer_phone}</div>}
+                    {contract.customer_email && <div className="text-gray-500">Email: {contract.customer_email}</div>}
+                  </>
+                ) : isCustomer ? (
+                  <div className="mt-1 space-y-1">
+                    <IMaskInput mask="+7 (000) 000-00-00" value={phone} onAccept={(v: string) => setPhone(v)} lazy={false} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 bg-white" />
+                    <div>
+                      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} onBlur={() => setEmailTouched(true)} placeholder="example@company.kz" className={`w-full border rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 bg-white ${emailTouched && !emailValid ? 'border-red-400 focus:ring-red-300' : 'border-gray-300 focus:ring-blue-300'}`} />
+                      {emailTouched && !emailValid && <div className="text-[10px] text-red-500 mt-0.5">Введите корректный email (example@company.kz)</div>}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-1 space-y-1">
+                    <div className="border border-dashed border-gray-300 rounded px-2 py-1 text-xs text-gray-400">Телефон</div>
+                    <div className="border border-dashed border-gray-300 rounded px-2 py-1 text-xs text-gray-400">Email</div>
+                  </div>
+                )}
+                <div className="mt-3 h-8 border-b border-dashed border-gray-300 flex items-end pb-0.5">
+                  {contract.customer_signed_at && <span className="text-green-700 flex items-center gap-1"><Shield size={10} /> ЭЦП {fmt(contract.customer_signed_at)}</span>}
+                </div>
+                <div className="text-gray-400 text-[10px] mt-0.5">МП / Подпись</div>
+              </div>
             </div>
-            <div className="text-xs text-gray-400 mt-1">МП / Подпись</div>
           </div>
-          <div>
-            <div className="font-bold mb-3">Заказчик:</div>
-            <div>{contract.customer_company}</div>
-            <div className="text-gray-500">БИН: {contract.customer_bin}</div>
-            <div className="text-gray-500 mt-1">{contract.customer_name}</div>
-            <div className="mt-4 h-10 border-b border-dashed border-gray-300 flex items-end pb-1">
-              {contract.customer_signed_at && (
-                <span className="text-green-700 text-xs flex items-center gap-1">
-                  <Shield size={11} /> ЭЦП подписано {fmt(contract.customer_signed_at)}
-                </span>
-              )}
+
+          {/* ── RIGHT: Kazakh ── */}
+          <div className="p-6 bg-gray-50/40 space-y-0">
+            <div className="text-center mb-4">
+              <div className="text-sm font-bold uppercase tracking-wide">ШАРТ № {contract.contract_number}</div>
+              <div className="text-xs text-gray-600">жылжымалы құрамды (контейнерді) беру қызметтерін көрсету туралы</div>
             </div>
-            <div className="text-xs text-gray-400 mt-1">МП / Подпись</div>
+            <div className="flex justify-between mb-3 text-xs text-gray-500">
+              <span>{city} қ.</span>
+              <span>«{today.getDate()}» {KZ_MONTHS[today.getMonth()]} {today.getFullYear()} ж.</span>
+            </div>
+
+            <p className="mb-3 text-xs">
+              <strong>«{contract.executor_company}»</strong>, «<strong>Орындаушы</strong>» деп аталатын, БСН {contract.executor_bin}, {contract.executor_name} тұлғасында, және{' '}
+              <strong>«{contract.customer_company}»</strong>, «<strong>Тапсырыс беруші</strong>» деп аталатын, БСН {contract.customer_bin}, {contract.customer_name} тұлғасында,
+              бірлесіп «Тараптар» деп аталатын, төмендегілер туралы осы Шартты жасасты:
+            </p>
+
+            <div className="font-bold text-center mt-4 mb-1 text-xs uppercase tracking-wide">1. Осы Шарттың мәні</div>
+            <p className="mb-1 text-xs">1.1. Орындаушы Тапсырыс берушіге ақы төленетін негізде халықаралық (экспорттық, транзиттік) және ішкі қатынастарда жүк тасымалдау үшін вагондар (контейнерлер) беруге міндеттенеді (бұдан әрі — Вагондар), ал Тапсырыс беруші Орындаушыға Қызметтерге ақы төлеуге және вагондардың кіру жолдарда тұруына байланысты жинақ ақысын өтеуге міндеттенеді.</p>
+            <p className="mb-1 text-xs">1.2. Қызметтер ГУ-12 нысаны бойынша вагондар беруге өтінім негізінде көрсетіледі. Тапсырыс берушінің талабы бойынша және оның қаражаты есебінен Орындаушы ҚР аумағы бойынша тасымал төлемдерін (теміржол тарифі) төлеу қызметін көрсете алады.</p>
+            <p className="mb-1 text-xs">1.3. Орындаушының Қызметтер құны Тараптардың келісімі бойынша айқындалады және осы Шарттың ажырамас бөлігі болып табылатын Шарттық бағаларды келісу хаттамасымен ресімделеді. Ішкі қатынаста Қызметтер құны Орындаушының Прейскуранты бойынша айқындалады.</p>
+            <p className="mb-1 text-xs">1.4. Осы Шартпен Тапсырыс беруші АО «КТЖ–Жүк тасымалдары» компаниясында ашылған Тапсырыс берушінің бірыңғай жеке шотынан (бұдан әрі — БЖШ) осы Шарт бойынша Орындаушыға төленуге жататын барлық сомаларды, соның ішінде тұрақсыздық айыпсомаларын есептен шығаруға Орындаушыға өзінің келісімін береді.</p>
+            <p className="mb-1 text-xs">1.5. Тараптардың қызметін реттейді: Халықаралық жүк қатынасы туралы Келісім (ХЖҚК); ТМД мемлекеттерінің теміржолдарының Тарифтік саясаты; қызметтер көрсету күніне қолданылатын Тарифтік нұсқаулық; ҚР 2001 жылғы 8 желтоқсандағы № 266-II «Теміржол көлігі туралы» Заңы; Жүктерді тасымалдау ережелері (2019 жылғы 02 тамыздағы № 612 бұйрық); Вагон (контейнер) операторының қызметтерін ұсыну ережелері (2012 жылғы 19 қазандағы № 709 бұйрық); осы Шарт талаптары мен ҚР өзге де нормативтік-құқықтық актілері.</p>
+            <p className="mb-1 text-xs">1.6. Терминдер: <em>Вагон</em> — Орындаушы меншік немесе өзге заңды негізде иеленетін өздігінен жүрмейтін көлік құралы. <em>Жүк алушы</em> — жүкті алатын және тасымалдау құжаттарында көрсетілген тұлға. <em>Жүк жөнелтуші</em> — жүкті жөнелтетін және тасымалдау құжаттарында көрсетілген тұлға. <em>Бос тұрып қалған Вагон</em> — Орындаушыға тәуелсіз себептер бойынша аралық теміржол стансаларында тоқтатылған Вагон.</p>
+            <p className="mb-3 text-xs">Осы Шарт бойынша жылжымалы құрам: {
+              (contract.contract_wagons && contract.contract_wagons.length > 0
+                ? contract.contract_wagons
+                : contract.wagon_number ? [{ id: '', wagon_number: contract.wagon_number, wagon_type: contract.wagon_type ?? '' }] : []
+              ).map((w, i) => (
+                <span key={w.id || i}>{i > 0 ? ', ' : ''}<strong>{w.wagon_number}</strong> ({WAGON_TYPE_LABELS[w.wagon_type] ?? w.wagon_type})</span>
+              ))
+            }. Жүк: <strong>{contract.cargo_name}</strong> (ЕТСНГ: {contract.cargo_etsng}). Бағыт: <strong>{contract.departure_station} → {contract.arrival_station}</strong>. Беру кезеңі: <strong>{fmt(contract.period_start)} – {fmt(contract.period_end)}</strong>.</p>
+
+            <div className="font-bold text-center mt-4 mb-1 text-xs uppercase tracking-wide">2. Тараптардың құқықтары мен міндеттері</div>
+            <p className="mb-1 text-xs"><strong>2.1. Орындаушы міндетті:</strong></p>
+            <p className="mb-1 text-xs">2.1.1. Тапсырыс беруші осы Шарттың барлық нормаларын орындаған кезде Қызметтерді сапалы және уақтылы көрсетуге.</p>
+            <p className="mb-1 text-xs">2.1.2. Халықаралық қатынаста Тапсырыс берушіге осы Шарт бойынша міндеттемелерін орындаған жағдайда теміржол жүк жөнелту хаттамасын толтыру жөніндегі нұсқаулықты ұсынуға.</p>
+            <p className="mb-1 text-xs">2.1.3. Өзгерістер күшіне еніп күнінен 15 (он бес) күнтізбелік күн бұрын хабарлама жіберу немесе сайтта жариялау арқылы Тапсырыс берушіге Қызметтер құнының өзгеруі туралы хабарлауға. Өзгерістер осы мерзім өткеннен кейін күшіне енеді және қосымша келісімдерге қол қоюды талап етпейді.</p>
+            <p className="mb-1 text-xs">2.1.4. Тапсырыс берушіні жүктеу стансасында келісілген тасымал көлеміне және жасалған төлемге сәйкес техникалық жарамды, коммерциялық жарайтын Вагондармен қамтамасыз етуге.</p>
+            <p className="mb-1 text-xs">2.1.5. Тапсырыс берушіні Қызметтерді тиісінше көрсетуге кедергі келтіретін немесе оларды мүмкін емес ететін барлық жағдайлар туралы хабардар етуге және өзінің құзыреті шегінде осындай жағдайларды жою үшін шаралар қабылдауға.</p>
+            <p className="mb-1 text-xs">2.1.6. Вагондардың теміржол кіру жолдарда тұруы үшін жинақ ақысын өндіртіп алудың қолданыстағы тәртібі мен тарифтері туралы сайтта жариялау арқылы Тапсырыс берушіні хабардар етуге.</p>
+            <p className="mb-2 text-xs">2.1.7. Тапсырыс берушінің міндеттемелерін орындамауынан туындаған Тапсырыс беруші кінәсінен жолда бос тұрып қалған Вагондар туралы хабардар етуге.</p>
+            <p className="mb-1 text-xs"><strong>2.2. Тапсырыс беруші міндетті:</strong></p>
+            <p className="mb-1 text-xs">2.2.1. Алдыңғы айдың 10-нан кешіктірмей тасымал жоспарының нөмірі (ГУ-12 болған жағдайда) көрсетілген өтінімді Орындаушыға жіберу арқылы ондық жоспарлауды жүзеге асыруға. Тасымалдаушыға Орындаушы жылжымалы құрам иесі ретінде міндетті түрде көрсетілген ГУ-12 нысаны бойынша өтінімдерді беруге.</p>
+            <p className="mb-1 text-xs">2.2.2. Осы Шарттың 1.3-тармағына сәйкес Тараптар айқындаған Қызметтер құнын Орындаушыға төлеуге.</p>
+            <p className="mb-1 text-xs">2.2.3. Жасалған тасымалдар бойынша тасымалдау құжаттары ресімделген күннен бастап 5 (бес) жұмыс күні ішінде жөнелтілім нөмірі, вагон нөмірі, жүктеу күні, жөнелту стансасы, тағайындалу стансасы, жүк жөнелтуші, жүктің атауы бар жүктеме ақпаратты жіберуге.</p>
+            <p className="mb-1 text-xs">2.2.4. Халықаралық қатынаста тасымалдау құжаттарын ХЖҚК талаптарына және Орындаушының нұсқаулықтарына сәйкес ресімдеуді және тасымал төлемдерін төлеуді қамтамасыз етуге.</p>
+            <p className="mb-1 text-xs">2.2.5. Тасымалдаушы стансаларынан тыс жерде Орындаушы Вагондарының тағайындалу стансаларында тұру мерзімін — 2 (екі) тәуліктен аспайтындай, егер Хаттамамен өзгеше белгіленбесе, қамтамасыз етуге.</p>
+            <p className="mb-1 text-xs">2.2.6. АО «ҰК «Қазақстан темiр жолы» теміржол кіру жолдарда Орындаушы Вагондарының тұруы үшін Орындаушының жинақ ақысын төлеу мақсатында жүк жөнелтушілер/жүк алушылармен вагон операторының қызметтерін ұсыну туралы шарт жасасуды қамтамасыз етуге. ГУ-46 нысаны бойынша вагондарды беру және алу ведомості негізінде 1 (бір) тәулік өткеннен кейін жинақ ақы есептеледі.</p>
+            <p className="mb-1 text-xs">2.2.7. 2.2.6-тармақты орындамаған жағдайда жинақ ақыға жауапкершілік Тапсырыс берушіге өтеді. Орындаушы берешек өтелгенге дейін қызметтер ұсынудан бас тартуға құқылы. Тапсырыс беруші кінәсінен жолда Вагондар бос тұрып қалған жағдайда барлық шығындарды Тапсырыс беруші өтейді.</p>
+            <p className="mb-1 text-xs">2.2.8. Тапсырыс беруші кінәсінен стансалық және магистральдық жолдарда Вагондар бос тұрып қалған жағдайда жалпы нысандағы Акт (ГУ-23) негізінде тұрақсыздық айыпсомасын төлеуге.</p>
+            <p className="mb-1 text-xs">2.2.9. Жүкті түсіргеннен кейін вагондарды жүк қалдықтарынан тазартуды, қажет болса 2019 жылғы 02 тамыздағы № 612 Бұйрықпен бекітілген Ережелерге сәйкес жууды қамтамасыз етуге.</p>
+            <p className="mb-1 text-xs">2.2.10. 2.2.6. және 2.2.9-тармақтарды орындамаған байланысты Орындаушы шеккен шығындарды өтеуге.</p>
+            <p className="mb-1 text-xs">2.2.11. Келісілген Өтінім бойынша жүктеуден бас тартқан жағдайда Орындаушыны 7 (жеті) жұмыс күні бұрын жазбаша нысанда хабардар етуге.</p>
+            <p className="mb-1 text-xs">2.2.12. 2.2.11-тармақты бұзған жағдайда бас тартылған тасымал көлемі сомасының 10%-ы мөлшерінде, бірақ 500 (бес жүз) АЕК-тен аспайтын айыппұл төлеуге, сондай-ақ Орындаушының растайтын шығындарын өтеуге.</p>
+            <p className="mb-1 text-xs">2.2.13. Орындаушымен келіспей маршруттарды өзгертуге және Вагондарды қайта бағыттауға жол бермеуге.</p>
+            <p className="mb-1 text-xs">2.2.14. Орындаушы Вагондарын қайта бағыттау үшін Орындаушыға тиесілі төлемдерді өтеуге.</p>
+            <p className="mb-1 text-xs">2.2.15. Орындаушының шеккен шығындарын толық көлемде өтеуге, келіспеген тасымалдар үшін Вагондарды пайдаланған тасымал бағытына Орындаушының қолданыстағы тарифтік ставкасынан екі есе мөлшерде айыппұл төлеуге.</p>
+            <p className="mb-1 text-xs">2.2.16. Тасымалдаушыда ашылған БЖШ-та Орындаушымен есеп айырысуға жеткілікті қаражат болуын қамтамасыз етуге.</p>
+            <p className="mb-1 text-xs">2.2.17. Жүктеу/түсіру операцияларымен байланысты кіру жолдарда тұрған кезеңде Орындаушы Вагондарының сақталуын қамтамасыз етуге.</p>
+            <p className="mb-1 text-xs">2.2.18. Орындаушы вагондарын тек Тараптар келіскен тасымалдарға ғана пайдалануға.</p>
+            <p className="mb-1 text-xs">2.2.19. 2.2.5-тармақшада белгіленген мерзімдерді асырғаны үшін жүктеу/түсіру стансаларында әрбір вагон үшін тәулігіне 12 500 (он екі мың бес жүз) теңге айыппұл төлеуге. Толық емес тәулік толық деп есептеледі.</p>
+            <p className="mb-1 text-xs">2.2.20. 2.2.15. және 2.2.18-тармақтарды бұзған жағдайда Вагондарды Орындаушы көрсеткен стансаға қайтарылғанға дейін келіспеген тасымалдарда пайдаланылған әрбір вагон үшін тәулігіне 12 500 (он екі мың бес жүз) теңге айыппұл төлеуге.</p>
+            <p className="mb-1 text-xs">2.2.21. Тасымалдауды, жүктеуді, түсіруді жүзеге асыруға қажетті лицензиялауды, жүкті декларациялауды және уәкілетті органдардан өзге де рұқсат құжаттарды алуды қамтамасыз етуге.</p>
+            <p className="mb-1 text-xs">2.2.22. Орындаушының сұрауы бойынша көрсетілген мерзімдерде тасымалдау құжаттарының, сенімхаттардың, жалпы нысандағы актілердің және дау мәселелерін реттеуге қажетті өзге де құжаттардың түпнұсқаларын және/немесе көшірмелерін ұсынуға.</p>
+            <p className="mb-1 text-xs">2.2.23. Халықаралық қатынаста жіберілетін әрбір Вагонға жүк алушыға бос Вагонды жіберу жөніндегі Орындаушының нұсқаулығын тапсыруға.</p>
+            <p className="mb-1 text-xs">2.2.24. Зақымдалған немесе ақаулы Вагон жүктеу/түсіруге келген жағдайда ГУ-23 жалпы нысандағы Акт жасасуға қатысуға және Орындаушыны дереу хабардар етуге.</p>
+            <p className="mb-1 text-xs">2.2.25. Орындаушының нұсқаулығына сәйкес ресімделмеген тасымалдау құжаттарына байланысты Орындаушының барлық шығындарын өтеуге.</p>
+            <p className="mb-1 text-xs">2.2.26. Тапсырыс беруші, жүк жөнелтуші немесе жүк алушының Жүктерді тасымалдау ережелерін, ХЖҚК және теміржол көлігінде қолданылатын өзге де нормативтік құжаттарды бұзуы нәтижесінде туындаған Орындаушының басқа да деректелген шығындарын, соның ішінде Орындаушы төлеген айыппұлдар мен жинақтарды өтеуге.</p>
+            <p className="mb-1 text-xs">2.2.27. Тапсырыс беруші Орындаушымен келіспеген маршрут бойынша бос Вагонды жіберу жөніндегі нұсқаулықты бұзған жағдайда, жүкті түсіру стансасынан жіберу күнінен Орындаушы көрсеткен стансаға келу сәтіне дейін жолда болған әрбір тәулік үшін 12 500 (он екі мың бес жүз) теңге айыппұл төлеуге.</p>
+            <p className="mb-1 text-xs">2.2.28. Жоспарланған жүктеу басталғанға дейін 10 (он) күнтізбелік күннен кешіктірмей вагондар беруге өтінімдерді Орындаушының электрондық мекенжайына жіберуге. Мөртаңбамен расталған өтінімдердің түпнұсқаларын тасымал есепті айы аяқталғаннан кейін 15 (он бес) күнтізбелік күн ішінде ұсынуға.</p>
+            <p className="mb-1 text-xs">2.2.29. Онкүндік басталуға 5 (бес) күн қалғанда Орындаушыға ГУ-11/ГУ-12 деректеріне сәйкес вагондар беру кестесін міндетті түрде жіберуге. Түзету онкүндік басталуға 5 (бес) күн қалғанда мүмкін.</p>
+            <p className="mb-2 text-xs">2.2.30. Вагондарды жүктеуге дайындауды өз қаражаты есебінен жүзеге асыруға.</p>
+            <p className="mb-1 text-xs"><strong>2.3. Орындаушы құқылы:</strong></p>
+            <p className="mb-1 text-xs">2.3.1. Тасымалдаушылар немесе мемлекеттік органдар жаңа тарифтер, жинақтар, айыппұлдар енгізген жағдайда 2.1.3-тармақшаға сәйкес Тапсырыс берушіні алдын ала хабардар ете отырып, Қызметтер құнын өзгертуге. Өзгеріс енгізілген сәтте жолда жүрген жүктерді тасымалдауға арналған Қызметтер құны өзгерілмейді.</p>
+            <p className="mb-1 text-xs">2.3.2. Тапсырыс беруші кінәсінен туындаған Қызметтерге уақтылы ақы төлеуді және өзге де шығындарды өтеуді талап етуге.</p>
+            <p className="mb-1 text-xs">2.3.3. Тапсырыс беруші осы Шарт талаптарын орындамаған немесе тиісінше орындамаған жағдайда Қызметтер көрсетуді тоқтата тұруға немесе міндеттемелерді орындауға кіріспеуге.</p>
+            <p className="mb-1 text-xs">2.3.4. Тапсырыс беруші осы Шарт талаптарын бірнеше рет бұзған жағдайда, бұзу күнінен кемінде 15 (он бес) күнтізбелік күн бұрын Тапсырыс берушіні алдын ала хабардар ете отырып, Шартты біржақты тәртіппен бұзуға.</p>
+            <p className="mb-2 text-xs">2.3.5. Тапсырыс берушінің берешегі болған жағдайда Орындаушы АО «КТЖ-Жүк тасымалдары» компаниясына тиісті хабарлама жіберу арқылы берешек толық өтелгенге дейін вагондарды жолда тоқтатуға құқылы.</p>
+            <p className="mb-1 text-xs"><strong>2.4. Тапсырыс беруші құқылы:</strong></p>
+            <p className="mb-1 text-xs">2.4.1. Осы Шартпен белгіленген талаптарға сәйкес Қызметтер көрсетуді талап етуге.</p>
+            <p className="mb-1 text-xs">2.4.2. Орындаушының ресми келісімі мен тиісті төлем жасалған жағдайда ғана жүкпен вагондардың маршрутын өзгертуге (қайта бағыттауға).</p>
+            <p className="mb-1 text-xs">2.4.3. Орындаушы Қызметтерінің құнын Шарт талаптарына сәйкес уақтылы және толық төлеуге.</p>
+            <p className="mb-1 text-xs">2.4.4. Орындаушыдан халықаралық қатынаста теміржол жүк жөнелту хаттамасын толтыру жөніндегі нұсқаулықты ұсынуды талап етуге.</p>
+            <p className="mb-1 text-xs">2.4.5. Орындаушыдан Қызметтер құнының өзгеруі туралы хабарламаны өзгерістер күшіне еніп күнінен 15 (он бес) күнтізбелік күн бұрын алуға.</p>
+            <p className="mb-3 text-xs">2.4.6. Орындаушыдан Өтінімге және жасалған төлемге сәйкес жүктеу стансасында техникалық жарамды, коммерциялық жарайтын вагондармен қамтамасыз етуді талап етуге.</p>
+
+            <div className="font-bold text-center mt-4 mb-1 text-xs uppercase tracking-wide">3. Қызмет құны және есеп айырысу тәртібі</div>
+            <p className="mb-1 text-xs">3.1. Тапсырыс беруші Өтінімді берген соң 2 (екі) жұмыс күнінен кешіктірмей Орындаушының есеп айырысу шотына Қызметтер құнының 100% (жүз пайыз) алдын ала төлемін жасайды, Орындаушы өзгеше белгілемесе. Тасымалдаушының тауар кассалары арқылы төлем жасау кезінде Тапсырыс беруші БЖШ-та Орындаушымен есеп айырысуға жеткілікті қаражат болуын қамтамасыз етеді. Кіру жолдарда Вагондардың тұруына байланысты жинақ ақыны да Тапсырыс беруші БЖШ-тан төлейді.</p>
+            <p className="mb-1 text-xs">3.2. Осы Шарт бойынша есеп айырысу валютасы — Қазақстан Республикасының ұлттық валютасы — теңге. Шот-фактуралар теңгемен беріледі.</p>
+            <p className="mb-1 text-xs">3.3. Орындаушы есепті айдан кейінгі айдың 10-нан (оныншы) кешіктірмей Тапсырыс берушіге мынадай құжаттарды ұсынады: орындалған жұмыстар (көрсетілген қызметтер) актісі (Р-1 нысаны), электрондық нысандағы шот-фактура, Р-1 актісіне есептік ведомость. Р-1 актісіне алынған күнінен бастап 3 (үш) күнтізбелік күн ішінде қол қойылып қайтарылады немесе дәлелді бас тарту ұсынылады. Дәлелді бас тарту болмаған жағдайда Қызметтер толық көлемде қабылданды деп есептеледі. Алдын ала төлем сомасын асырып кеткен жағдайда Тапсырыс беруші 3 (үш) жұмыс күні ішінде айырманы төлейді. Қалдық бар болса Орындаушы оны болашақ қызметтер есебіне жазуға немесе жазбаша сұрау алынғаннан кейін 15 (он бес) жұмыс күні ішінде қайтаруға құқылы.</p>
+            <p className="mb-1 text-xs">3.4. Тапсырыс берушіде Р-1 актісіндегі сомаларға қарсылықтар болса, жазбаша претензия жіберіледі. Орындаушы оны 1 (бір) ай ішінде қарайды және жазбаша жауап жолдайды. Претензия қанағаттандырылса, заңнамаға сәйкес түзету шот-фактурасы ресімделеді.</p>
+            <p className="mb-1 text-xs">3.5. Вагондар зақымдалған жағдайда Тапсырыс беруші мамандандырылған ұйымда жөндеу жүргізуге не жөндеудің толық құнын (жаңадан орнатылған тораптар мен бөлшектердің құны, жұмыстар мен қызметтер шығындарын қоса алғанда), Вагондарды жөндеуге жіберу және жөндеуден алып қайту бойынша теміржол тарифі шығындарын шот ұсынылған күннен бастап 5 (бес) күнтізбелік күн ішінде өтеуге міндетті. Сондай-ақ Тапсырыс беруші Вагон жұмыс парігінен шыққан әрбір тәулік үшін 12 500 (он екі мың бес жүз) теңге айыппұл төлейді.</p>
+            <p className="mb-3 text-xs">3.6. Төлем жасаған кезде аударымға байланысты барлық банктік шығындарды төлем жасайтын Тарап көтереді.</p>
+
+            <div className="font-bold text-center mt-4 mb-1 text-xs uppercase tracking-wide">4. Тараптардың жауапкершілігі</div>
+            <p className="mb-1 text-xs">4.1. Тапсырыс беруші 2.2.3-тармақшаға сәйкес ақпарат бермеген жағдайда Орындаушы 9.3-тармаққа сәйкес жедел деректер негізінде Қызметтерге ақы мен тұрақсыздық айыпсомасын дербес есептейді. Шот-фактура беру тәртібін бұзғаны үшін Орындаушыға әкімшілік жаза қолданылса, Тапсырыс беруші оны анықталу мерзімінен тәуелсіз толық өтейді.</p>
+            <p className="mb-1 text-xs">4.2. Тағайындалу және жөнелту стансаларындағы Вагондардың тұру мерзімдерін есептеу кезінде Орындаушы осы Шарттың 9.3-тармағына сәйкес жедел деректерді пайдаланады.</p>
+            <p className="mb-1 text-xs">4.3. Тапсырыс беруші мойындаған тұрақсыздық айыпсомасы алдын ала төлем сомасынан Орындаушы ұстайды.</p>
+            <p className="mb-1 text-xs">4.4. Тапсырыс беруші Өтінімде көрсетілген ақпараттың толықтығы мен дұрыстығы үшін жауапкершілік атқарады.</p>
+            <p className="mb-1 text-xs">4.5. Тапсырыс беруші ҚР аумағында вагондарды Тасымалдаушыға қабылдаған сәттен тапсырған сәтке дейін вагондардың барлық тораптары мен бөлшектерінің техникалық жай-күйі мен сақталуы үшін жауапкершілік атқарады. Жылжымалы құрамды зақымдаған немесе жоғалтқан жағдайда жоғалған вагонның немесе қажетті жөндеудің құны, сондай-ақ жоғалған мүліктің немесе жөндеудің құнының 50% (елу пайызы) мөлшерінде айыппұл өндіртіп алынады. ҚР-дан тыс жерде жауапкершілік Халықаралық қатынаста жүк вагондарын пайдалану ережелері (ХВП) негізінде айқындалады.</p>
+            <p className="mb-1 text-xs">4.6. Міндеттемелерді тиісінше орындамаған жағдайда Тараптар теміржол көлігі мәселелері бойынша Қазақстан Республикасының заңнамасына сәйкес жауапкершілік атқарады.</p>
+            <p className="mb-1 text-xs">4.7. Дебиторлық берешек туындаған жағдайда Тапсырыс беруші Орындаушының хабарламасы берілген күннен бастап 3 (үш) жұмыс күні ішінде төлем жасауға міндетті. Бұзылған жағдайда Орындаушы берешек сомасынан әрбір күнгі кешіктіргені үшін 0,1% өсімпұл есептейді, бірақ жалпы берешек сомасының 10%-нан аспайды.</p>
+            <p className="mb-1 text-xs">4.8. Тапсырыс беруші міндеттемелерін тиісінше орындамаған жағдайда Орындаушы 1 (бір) жұмыс күні бұрын хабардар ете отырып, толық және тиісті орындалғанға дейін Қызметтер көрсетуді тоқтата тұруға құқылы. Тоқтата тұруға байланысты барлық айыппұлдық санкцияларды Тапсырыс беруші төлейді.</p>
+            <p className="mb-1 text-xs">4.9. Тапсырыс беруші 2.2.8., 2.2.10., 2.2.17., 2.2.20., 2.2.25. және 2.2.26-тармақтар бойынша міндеттемелерін тиісінше орындамаған жағдайда Орындаушы ұсынған айыппұл сомасынан кешіктірілген әрбір күн үшін 0,1% өсімпұл төлеуге міндетті, бірақ жалпы берешек сомасының 10%-нан аспайды. Берешекті өтеу тәртібі: алдымен тұрақсыздық айыпсомасы, одан кейін негізгі борыш.</p>
+            <p className="mb-1 text-xs">4.10. 2.2.12-тармаққа сәйкес Қызметтерден бас тартқан жағдайда Тапсырыс беруші бос Вагондардың жүрісі үшін Орындаушының растайтын шығындарын өтеуге, бос вагондарды Орындаушы көрсеткен стансаға өз есебінен жіберуге, сондай-ақ жүктеуге жіберілген сәттен Орындаушы көрсеткен стансаға келген сәтке дейін әрбір вагон үшін тәулігіне 12 500 (он екі мың бес жүз) теңге екі есе мөлшерде өсімпұл төлеуге міндетті. Толық емес тәулік толық деп есептеледі.</p>
+            <p className="mb-1 text-xs">4.11. Вагондар 2.2.19-тармақшада белгіленген мерзімдерден асып тұрған жағдайда Орындаушы Өтінімде көрсетілген мөлшерде вагондарды уақтылы немесе мүлде бермегені үшін жауапкершілік атқармайды. Тасымалдаушы ГУ-12 өтінімін Орындаушысыз келіскен жағдайда Орындаушы Тапсырыс берушіні вагондармен қамтамасыз ете алмағаны үшін жауапкершілік атқармайды.</p>
+            <p className="mb-3 text-xs">4.12. Осы Шартта көзделмеген жағдайларда Тараптар Қазақстан Республикасының қолданыстағы заңнамасына сәйкес жауапкершілік атқарады.</p>
+
+            <div className="font-bold text-center mt-4 mb-1 text-xs uppercase tracking-wide">5. Еңсерілмейтін күш жағдайлары</div>
+            <p className="mb-1 text-xs">5.1. Тараптар осы Шартта көзделген кез келген міндеттемені орындамаған немесе кешіктіргені үшін еңсерілмейтін күш жағдайлары: табиғи апаттар, кез келген сипаттағы соғыс қимылдары, блокадалар, жаппай тәртіпсіздіктер, мемлекеттік органдар мен теміржол әкімшіліктерінің шешімдері туындаған жағдайда жауапкершіліктен босатылады.</p>
+            <p className="mb-1 text-xs">5.2. Міндеттемелерін орындауы мүмкін болмай қалған Тарап еңсерілмейтін күш жағдайлары туындаған күннен бастап 5 (бес) жұмыс күні ішінде екінші Тарапты олардың басталу күні туралы хабардар етуге міндетті.</p>
+            <p className="mb-1 text-xs">5.3. Еңсерілмейтін күш жағдайларының болуы мен ұзақтығын растайтын тиісті дәлел аталған жағдайлар орын алған елдің уәкілетті органы/ұйымының анықтамалары болып табылады.</p>
+            <p className="mb-1 text-xs">5.4. Хабарламауы немесе уақытылы хабарламауы, сондай-ақ еңсерілмейтін күш жағдайларының туындауы фактісін растамауы Тарапты аталған жағдайларды міндеттемелерді орындамағаны үшін жауапкершіліктен босататын негіз ретінде пайдалану құқығынан айырады.</p>
+            <p className="mb-3 text-xs">5.5. Еңсерілмейтін күш жағдайлары 30 (отыз) күнтізбелік күннен астам жалғасса, Тараптардың әрқайсысы Шарт бойынша міндеттемелерді орындаудан бас тартуға құқылы, бұл жағдайда ешбір Тарап Шартты бұзу нәтижесінде туындаған шығындарды өтеуді талап ете алмайды.</p>
+
+            <div className="font-bold text-center mt-4 mb-1 text-xs uppercase tracking-wide">6. Даулар шешу тәртібі</div>
+            <p className="mb-1 text-xs">6.1. Шарт талаптарын орындау барысында туындаған даулар мен келіспеушіліктерді Тараптар келіссөздер арқылы шешеді.</p>
+            <p className="mb-1 text-xs">6.2. Істі сотқа беруге дейін дауды шешудің претензиялық тәртібі міндетті болып табылады. Претензия жазбаша нысанда ұсынылуы тиіс.</p>
+            <p className="mb-1 text-xs">6.3. Претензияны алған Тарап оны алған күннен бастап 30 (отыз) күнтізбелік күн ішінде оны қарауға және претензия мәні бойынша жауап беруге міндетті.</p>
+            <p className="mb-3 text-xs">6.4. Өзара қолайлы нәтижеге қол жеткізілмеген жағдайда келіспеушіліктер Қазақстан Республикасының қолданыстағы заңнамасына сәйкес Орындаушының орналасқан жері бойынша сот тәртібімен қаралады.</p>
+
+            <div className="font-bold text-center mt-4 mb-1 text-xs uppercase tracking-wide">7. Осы Шартты бұзу</div>
+            <p className="mb-1 text-xs">7.1. Осы Шарт Тараптардың келісімі бойынша, осы Шарт пен ҚР заңнамасында көзделген жағдайларда немесе Тараптардың бірінің бастамасымен біржақты тәртіппен мерзімінен бұрын бұзылуы мүмкін.</p>
+            <p className="mb-1 text-xs">7.2. Тарап болжамды бұзу күнінен кемінде 15 (он бес) күнтізбелік күн бұрын екінші Тарапты жазбаша хабардар ету шартымен осы Шартты мерзімінен бұрын бұзуға құқылы. Барлық өзара есеп айырысулар жүргізілгеннен кейін Шарт бұзылды деп есептеледі.</p>
+            <p className="mb-3 text-xs">7.3. Шарт бұзылған жағдайда Тапсырыс беруші нақты алдын ала төлем жасаса, Орындаушы Тараптар өтелуге жататын соманы айқындаған сәттен бастап 20 (жиырма) жұмыс күні ішінде нақты шеккен және деректелген шығындар мен нақты көрсетілген Қызметтер құнын шегеріп алдын ала төлем сомасын қайтарады. Алдын ала төлем сомасы шығындар мен тұрақсыздық айыпсомасынан аз болса, Тапсырыс беруші 20 (жиырма) жұмыс күні ішінде айырма сомасын төлейді.</p>
+
+            <div className="font-bold text-center mt-4 mb-1 text-xs uppercase tracking-wide">8. Сыбайлас жемқорлыққа қарсы іс-қимыл</div>
+            <p className="mb-1 text-xs">8.1. Осы Шарт бойынша міндеттемелерін орындау кезінде Тараптар мен олардың қызметкерлері заңсыз артықшылықтар алу мақсатында кез келген тұлғаларға тікелей немесе жанама түрде ақшалай қаражат немесе материалдық құндылықтар төлемейді, ұсынбайды және олардың төленуіне рұқсат бермейді.</p>
+            <p className="mb-1 text-xs">8.2. Осы Шарт бойынша міндеттемелерін орындау кезінде Тараптар мен олардың қызметкерлері қолданылатын заңнама бойынша пара беру/алу, коммерциялық сатып алу ретінде саралануы мүмкін іс-әрекеттерді, сондай-ақ қылмыстық жолмен алынған кірістерді заңдастыруға (жылыстатуға) қарсы іс-қимыл жөніндегі заңнама мен халықаралық актілер талаптарын бұзатын іс-әрекеттерді жасамайды.</p>
+            <p className="mb-1 text-xs">8.3. Тараптардың әрқайсысы екінші Тараптың қызметкерлерін ақша сомалары беру, сыйлықтар тарту, олар үшін жұмыстар (қызметтер) тегін орындау және өзге де жолдармен ынталандырудан, сондай-ақ осы жолмен ынталандырылатын қызметкерді белгілі бір іс-әрекеттер жасауға итермелеуден бас тартады.</p>
+            <p className="mb-1 text-xs">8.4. Тараптың сыбайлас жемқорлыққа қарсы талаптарды бұзу орын алды немесе алуы мүмкін деп күдіктенген жағдайда, тиісті Тарап екінші Тарапты жазбаша нысанда хабардар етуге міндеттенеді.</p>
+            <p className="mb-1 text-xs">8.5. Жазбаша хабарламада Тарап контрагенттің, оның қызметкерлерінің қолданылатын заңнама бойынша пара беру немесе алу ретінде саралануы мүмкін іс-әрекеттер жасауы бойынша осы талаптарды бұзды немесе бұзуы мүмкін деп негізді болжам жасауға мүмкіндік беретін нақты деректерге немесе материалдарға сілтеме жасауға міндетті.</p>
+            <p className="mb-3 text-xs">8.6. Тараптар сыбайлас жемқорлықтың алдын алу рәсімдерін жүргізуді мойындайды және олардың сақталуын бақылайды. Тараптар сыбайлас жемқорлық қызметке тартылуы мүмкін контрагенттермен іскерлік қатынас тәуекелдерін барынша азайтуға ұмтылады және сыбайлас жемқорлықтың алдын алу мақсатында бір-біріне өзара жәрдем көрсетеді.</p>
+
+            <div className="font-bold text-center mt-4 mb-1 text-xs uppercase tracking-wide">9. Қорытынды ережелер</div>
+            <p className="mb-1 text-xs">9.1. Осы Шарт Тараптар қол қойған күннен бастап күшіне енеді және {fmt(contract.period_end)} дейін қолданылады, ал өзара есеп айырысулар бөлігінде — Тараптар өздерінің міндеттемелерін толық орындаған сәтке дейін. Шарт Тараптардың электрондық пошта арқылы алмасатын түрлі-түсті сканерленген көшірмелері арқылы қол қойылуы мүмкін, олар Шарттың түпнұсқасына теңдестіріледі. Бұл ретте Тапсырыс беруші Орындаушыға қол қойылған шарттың түпнұсқасын жіберуге міндеттенеді.</p>
+            <p className="mb-1 text-xs">9.2. Тараптардың ешқайсысы осы Шарттың қолданылу мерзімі аяқталудан 30 (отыз) күнтізбелік күн бұрын екінші Тарапты Шартты бұзу ниеті туралы жазбаша хабардар етпесе, осы Шарттың қолданылу мерзімі келесі күнтізбелік жылға ұзартылады.</p>
+            <p className="mb-1 text-xs">9.3. Осы Шартты орындау шеңберінде пайдаланылатын вагондар туралы деректер Орындаушының ақпараттық деректері бойынша айқындалады.</p>
+            <p className="mb-1 text-xs">9.4. Осы Шарт талаптары кез келген үшінші тарап үшін құпия болып табылады және ҚР заңнамасымен тікелей көзделген жағдайларды қоспағанда, екінші Тараптың жазбаша келісімінсіз Тараптар тарапынан жария етілмеуге жатады.</p>
+            <p className="mb-1 text-xs">9.5. Осы Шартқа барлық өзгерістер мен толықтырулар, сондай-ақ құжаттармен алмасу жазбаша нысанда жасалуы, Тараптардың уәкілетті өкілдері қол қойып, мөр бедерін қоюы тиіс. Аталған құжаттар пошта немесе электрондық байланыс арқылы жіберіледі, кейіннен 5 (бес) жұмыс күні ішінде түпнұсқалар жолданады.</p>
+            <p className="mb-1 text-xs">9.6. Осы Шарт бойынша Тараптардың құқықтары мен міндеттері екінші Тараптың жазбаша келісімінсіз үшінші тұлғаларға берілуі мүмкін емес.</p>
+            <p className="mb-1 text-xs">9.7. Факсимильді немесе электрондық байланыс арқылы берілетін барлық хабарламалар, өтінімдер мен өзге де хабарлар кейіннен түпнұсқалары жеке өзі немесе курьерлік пошта арқылы жіберілген жағдайда заңды күшке ие болады.</p>
+            <p className="mb-1 text-xs">9.8. Осы Шарт орыс тілінде екі данада жасалды, олардың заңды күші бірдей, Тараптардың әрқайсысына бір-бірден беріледі. Шарт WagonFinder платформасында жасалды, идентификатор: {contract.contract_number}.</p>
+            <p className="mb-3 text-xs">9.9. Факсимильді байланыс немесе электрондық пошта арқылы берілген шарттар, қосымша келісімдер, шоттар, хаттамалар, актілер олардың түпнұсқаларымен ауыстырылғанға дейін заңды күшке ие болады.</p>
+
+            <div className="font-bold text-center mt-4 mb-2 text-xs uppercase tracking-wide">10. Тараптардың заңды мекенжайлары мен банктік деректемелері</div>
+            <div className="grid grid-cols-2 gap-4 pt-3 border-t border-gray-200 text-xs">
+              <div>
+                <div className="font-bold mb-1">Орындаушы:</div>
+                <div>{contract.executor_company}</div>
+                <div className="text-gray-500">БСН: {contract.executor_bin}</div>
+                <div className="text-gray-500">{contract.executor_name}</div>
+                {contract.executor_signed_at ? (
+                  <>
+                    {contract.executor_phone && <div className="text-gray-500">Тел: {contract.executor_phone}</div>}
+                    {contract.executor_email && <div className="text-gray-500">Email: {contract.executor_email}</div>}
+                  </>
+                ) : isExecutor ? (
+                  <div className="mt-1 space-y-1">
+                    <IMaskInput mask="+7 (000) 000-00-00" value={phone} onAccept={(v: string) => setPhone(v)} lazy={false} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 bg-white" />
+                    <div>
+                      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} onBlur={() => setEmailTouched(true)} placeholder="example@company.kz" className={`w-full border rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 bg-white ${emailTouched && !emailValid ? 'border-red-400 focus:ring-red-300' : 'border-gray-300 focus:ring-blue-300'}`} />
+                      {emailTouched && !emailValid && <div className="text-[10px] text-red-500 mt-0.5">Дұрыс email енгізіңіз</div>}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-1 space-y-1">
+                    <div className="border border-dashed border-gray-300 rounded px-2 py-1 text-xs text-gray-400">Телефон</div>
+                    <div className="border border-dashed border-gray-300 rounded px-2 py-1 text-xs text-gray-400">Email</div>
+                  </div>
+                )}
+                <div className="mt-3 h-8 border-b border-dashed border-gray-300 flex items-end pb-0.5">
+                  {contract.executor_signed_at && <span className="text-green-700 flex items-center gap-1"><Shield size={10} /> ЭЦҚ {fmt(contract.executor_signed_at)}</span>}
+                </div>
+                <div className="text-gray-400 text-[10px] mt-0.5">МО / Қолы</div>
+              </div>
+              <div>
+                <div className="font-bold mb-1">Тапсырыс беруші:</div>
+                <div>{contract.customer_company}</div>
+                <div className="text-gray-500">БСН: {contract.customer_bin}</div>
+                <div className="text-gray-500">{contract.customer_name}</div>
+                {contract.customer_signed_at ? (
+                  <>
+                    {contract.customer_phone && <div className="text-gray-500">Тел: {contract.customer_phone}</div>}
+                    {contract.customer_email && <div className="text-gray-500">Email: {contract.customer_email}</div>}
+                  </>
+                ) : isCustomer ? (
+                  <div className="mt-1 space-y-1">
+                    <IMaskInput mask="+7 (000) 000-00-00" value={phone} onAccept={(v: string) => setPhone(v)} lazy={false} className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 bg-white" />
+                    <div>
+                      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} onBlur={() => setEmailTouched(true)} placeholder="example@company.kz" className={`w-full border rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 bg-white ${emailTouched && !emailValid ? 'border-red-400 focus:ring-red-300' : 'border-gray-300 focus:ring-blue-300'}`} />
+                      {emailTouched && !emailValid && <div className="text-[10px] text-red-500 mt-0.5">Дұрыс email енгізіңіз</div>}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-1 space-y-1">
+                    <div className="border border-dashed border-gray-300 rounded px-2 py-1 text-xs text-gray-400">Телефон</div>
+                    <div className="border border-dashed border-gray-300 rounded px-2 py-1 text-xs text-gray-400">Email</div>
+                  </div>
+                )}
+                <div className="mt-3 h-8 border-b border-dashed border-gray-300 flex items-end pb-0.5">
+                  {contract.customer_signed_at && <span className="text-green-700 flex items-center gap-1"><Shield size={10} /> ЭЦҚ {fmt(contract.customer_signed_at)}</span>}
+                </div>
+                <div className="text-gray-400 text-[10px] mt-0.5">МО / Қолы</div>
+              </div>
+            </div>
           </div>
+
         </div>
       </div>
 
       {/* Action */}
       {!bothSigned && (isExecutor || isCustomer) && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between">
-          <div>
-            <div className="text-sm font-medium text-amber-800">
-              {mySigned ? 'Вы подписали договор. Ожидаем подпись другой стороны.' : 'Ознакомьтесь с договором и подпишите его ЭЦП'}
+        <div className={`flex items-center gap-3 px-4 py-2.5 rounded-xl border shrink-0 ${mySigned ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
+          {mySigned ? (
+            <div className="flex items-center gap-2 text-sm font-medium text-green-800 flex-1">
+              <CheckCircle size={15} /> {tc('awaitingOtherParty')}
             </div>
-            <div className="text-xs text-amber-600 mt-0.5">
-              {isExecutor ? 'Вы выступаете как Исполнитель (собственник вагонов)' : 'Вы выступаете как Заказчик (грузоотправитель)'}
-            </div>
-          </div>
-          {!mySigned && (
-            <Button onClick={sign} loading={signing}>
-              <Shield size={14} /> Подписать ЭЦП
-            </Button>
+          ) : (
+            <>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-amber-800 leading-tight">{tc('awaitingYourSignature')}</div>
+                <div className="text-xs text-amber-600">{isExecutor ? tc('youAreExecutor') : tc('youAreCustomer')}</div>
+              </div>
+              {!canSign && (
+                <div className="flex items-center gap-1.5 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5 shrink-0">
+                  <AlertCircle size={12} />
+                  <span>{tc('fillContacts')}</span>
+                </div>
+              )}
+              <Button size="sm" onClick={sign} loading={signing} disabled={!canSign}>
+                <Shield size={13} /> {tc('signEds')}
+              </Button>
+            </>
           )}
+          {signError && <div className="text-xs text-red-600">{signError}</div>}
         </div>
       )}
+    </div>
     </div>
   );
 }

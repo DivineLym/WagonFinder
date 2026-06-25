@@ -14,14 +14,14 @@ export default async function WagonOwnerPage() {
 
   const { data: wagons } = await supabase
     .from('wagons')
-    .select('*')
+    .select('*, contract_wagons(contract_id, contracts(status))')
     .eq('owner_id', user.id)
     .order('created_at', { ascending: false });
 
   return (
     <FleetDashboard
       profile={profile as Profile}
-      wagons={(wagons ?? []) as Wagon[]}
+      wagons={(wagons ?? []) as any[]}
     />
   );
 }

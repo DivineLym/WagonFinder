@@ -8,80 +8,60 @@ export async function seedShipperData(profileId: string) {
       shipper_id: profileId,
       gu12_number: 'ГУ12-2231423-001',
       cargo_etsng_code: '411062',
-      cargo_name: 'Нефть сырая',
       departure_esr_code: '61100',
-      departure_station_name: 'Атырау',
       arrival_esr_code: '67030',
-      arrival_station_name: 'Алматы-Товарная',
       quantity_planned: 12,
       quantity_fulfilled: 3,
       period_start: '2026-06-01',
       period_end: '2026-06-30',
-      wagon_type_required: 'tank',
       status: 'active',
     },
     {
       shipper_id: profileId,
       gu12_number: 'ГУ12-2231423-002',
       cargo_etsng_code: '161002',
-      cargo_name: 'Зерно пшеница',
       departure_esr_code: '65010',
-      departure_station_name: 'Нур-Султан (Астана)',
       arrival_esr_code: '63100',
-      arrival_station_name: 'Шымкент',
       quantity_planned: 8,
       quantity_fulfilled: 0,
       period_start: '2026-06-10',
       period_end: '2026-07-10',
-      wagon_type_required: 'hopper',
       status: 'active',
     },
     {
       shipper_id: profileId,
       gu12_number: 'ГУ12-2231423-003',
       cargo_etsng_code: '223001',
-      cargo_name: 'Уголь каменный',
       departure_esr_code: '65300',
-      departure_station_name: 'Экибастуз',
       arrival_esr_code: '64100',
-      arrival_station_name: 'Павлодар',
       quantity_planned: 20,
       quantity_fulfilled: 20,
       period_start: '2026-05-01',
       period_end: '2026-05-31',
-      wagon_type_required: 'gondola',
       status: 'fulfilled',
     },
     {
       shipper_id: profileId,
       gu12_number: 'ГУ12-2231423-004',
       cargo_etsng_code: '421001',
-      cargo_name: 'Удобрения минеральные',
       departure_esr_code: '62100',
-      departure_station_name: 'Актобе',
       arrival_esr_code: '67010',
-      arrival_station_name: 'Алматы-1',
       quantity_planned: 15,
       quantity_fulfilled: 7,
       period_start: '2026-06-15',
       period_end: '2026-07-15',
-      wagon_type_required: 'hopper',
       status: 'partially_fulfilled',
     },
     {
       shipper_id: profileId,
       gu12_number: 'ГУ12-2231423-005',
       cargo_etsng_code: '011001',
-      cargo_name: 'Черные металлы',
       departure_esr_code: '66100',
-      departure_station_name: 'Семей',
       arrival_esr_code: '60100',
-      arrival_station_name: 'Актау-Морской',
       quantity_planned: 6,
       quantity_fulfilled: 0,
       period_start: '2026-07-01',
       period_end: '2026-07-31',
-      wagon_type_required: 'flatcar',
       status: 'active',
     },
   ];
@@ -116,7 +96,7 @@ export async function seedWagonOwnerData(profileId: string) {
       next_repair_date: fmt(addMonths(today, 6)),
       remaining_mileage_km: 145000,
       status: 'active',
-      current_esr_code: '61100',
+      current_esr_code: '66170',
       last_operation: 'Прибытие на станцию',
     },
     {
@@ -132,7 +112,7 @@ export async function seedWagonOwnerData(profileId: string) {
       next_repair_date: fmt(addDays(today, 20)),
       remaining_mileage_km: 18000,
       status: 'active',
-      current_esr_code: '65010',
+      current_esr_code: '69000',
       last_operation: 'Погрузка завершена',
     },
     {
@@ -148,7 +128,7 @@ export async function seedWagonOwnerData(profileId: string) {
       next_repair_date: fmt(addDays(today, -30)),
       remaining_mileage_km: 0,
       status: 'in_repair',
-      current_esr_code: '63100',
+      current_esr_code: '69860',
       last_operation: 'Направлен в депо',
     },
     {
@@ -164,7 +144,7 @@ export async function seedWagonOwnerData(profileId: string) {
       next_repair_date: fmt(addMonths(today, 10)),
       remaining_mileage_km: 210000,
       status: 'booked',
-      current_esr_code: '67030',
+      current_esr_code: '67390',
       last_operation: 'Отправление со станции',
     },
     {
@@ -206,11 +186,14 @@ const MODELS: Record<string, string[]> = {
   refrigerator: ['БМЗ-5', 'АРВ-Э', 'РС-4'],
 };
 const STATIONS: [string, string][] = [
-  ['61100','Атырау'], ['67030','Алматы-Товарная'], ['65010','Нур-Султан (Астана)'],
-  ['63100','Шымкент'], ['44100','Қарағанды'], ['72000','Актобе'],
-  ['71200','Ақтау-Теңіз'], ['42400','Костанай'], ['45678','Павлодар'],
-  ['66100','Семей'], ['48100','Петропавловск'], ['65300','Екібастуз'],
-  ['60100','Ақтау-Морской'], ['62100','Елек'], ['67010','Алматы-1'],
+  ['70000','Алматы-1'],       ['70010','Алматы-2'],        ['69000','Астана-1'],
+  ['66170','Атырау'],         ['66350','Актау-Порт'],      ['68950','Актобе'],
+  ['69860','Шымкент'],        ['69800','Арысь'],           ['67390','Қарағанды'],
+  ['69610','Павлодар'],       ['70940','Семей'],           ['69470','Екибастуз-2'],
+  ['68400','Костанай'],       ['68870','Петропавловск'],   ['71370','Усть-Каменогорск'],
+  ['67700','Жезказган'],      ['67750','Балхаш'],          ['70630','Тараз'],
+  ['67170','Кызылорда'],      ['66390','Жанаозен'],        ['68700','Кокшетау'],
+  ['67430','Темиртау'],       ['70800','Актогай'],         ['70870','Аягоз'],
 ];
 const CARGOS: [string, string, (typeof WAGON_TYPES)[number]][] = [
   ['411062','Нефть сырая','tank'],      ['411001','Дизельное топливо','tank'],
@@ -226,11 +209,10 @@ function rndInt(min: number, max: number) { return Math.floor(Math.random() * (m
 function addDays(d: Date, n: number) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
 function fmt(d: Date) { return d.toISOString().split('T')[0]; }
 
-export async function seedBulkData(wagonOwnerId: string, shipperId: string) {
+export async function seedBulkData(wagonOwnerId: string) {
   const supabase = createClient();
   const today = new Date();
 
-  // 50 wagons
   const wagons = Array.from({ length: 50 }, (_, i) => {
     const type = rnd(WAGON_TYPES);
     const model = rnd(MODELS[type]);
@@ -256,47 +238,8 @@ export async function seedBulkData(wagonOwnerId: string, shipperId: string) {
     };
   });
 
-  // 50 GU-12 orders
-  const usedNums = new Set<string>();
-  const orders = Array.from({ length: 50 }, (_, i) => {
-    const cargo = rnd(CARGOS);
-    const dep = rnd(STATIONS);
-    let arr = rnd(STATIONS);
-    while (arr[0] === dep[0]) arr = rnd(STATIONS);
-    const planned = rndInt(4, 20);
-    const fulfilled = rndInt(0, planned);
-    const status = fulfilled === planned ? 'fulfilled' : fulfilled > 0 ? 'partially_fulfilled' : 'active';
-    const startOffset = rndInt(-30, 60);
-    let num: string;
-    do { num = `ГУ12-BULK-${String(i + 1).padStart(3,'0')}-${rndInt(100,999)}`; } while (usedNums.has(num));
-    usedNums.add(num);
-    return {
-      shipper_id: shipperId,
-      gu12_number: num,
-      cargo_etsng_code: cargo[0],
-      cargo_name: cargo[1],
-      departure_esr_code: dep[0],
-      departure_station_name: dep[1],
-      arrival_esr_code: arr[0],
-      arrival_station_name: arr[1],
-      quantity_planned: planned,
-      quantity_fulfilled: fulfilled,
-      period_start: fmt(addDays(today, startOffset)),
-      period_end: fmt(addDays(today, startOffset + rndInt(20, 60))),
-      wagon_type_required: cargo[2],
-      status,
-      is_public: false,
-    };
-  });
+  const { error } = await supabase.from('wagons').upsert(wagons, { onConflict: 'number' });
+  if (error) throw new Error(error.message);
 
-  const results = await Promise.all([
-    wagonOwnerId
-      ? supabase.from('wagons').upsert(wagons, { onConflict: 'number' })
-      : Promise.resolve({ error: null }),
-    supabase.from('gu12_orders').upsert(orders, { onConflict: 'gu12_number' }),
-  ]);
-
-  if (results[0].error) throw new Error('Wagons: ' + results[0].error.message);
-  if (results[1].error) throw new Error('Orders: ' + results[1].error.message);
-  return { wagons: wagonOwnerId ? wagons.length : 0, orders: orders.length };
+  return { wagons: wagons.length };
 }

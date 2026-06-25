@@ -3,9 +3,9 @@ import { redirect } from 'next/navigation';
 import { ContractView } from '@/components/contract/ContractView';
 import type { Profile } from '@/types';
 
-export default async function ContractPage({ searchParams }: { searchParams: Promise<{ application_id?: string }> }) {
-  const { application_id } = await searchParams;
-  if (!application_id) redirect('/');
+export default async function ContractPage({ searchParams }: { searchParams: Promise<{ id?: string; application_id?: string }> }) {
+  const { id, application_id } = await searchParams;
+  if (!id && !application_id) redirect('/');
 
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -14,11 +14,10 @@ export default async function ContractPage({ searchParams }: { searchParams: Pro
   const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
   if (!profile) redirect('/login');
 
-  const { data: contract } = await supabase
-    .from('contracts')
-    .select('*')
-    .eq('application_id', application_id)
-    .single();
+  const query = supabase.from('contracts').select('*, contract_wagons(*)');
+  const { data: contract } = id
+    ? await query.eq('id', id).single()
+    : await query.eq('application_id', application_id!).single();
 
   if (!contract) {
     return (

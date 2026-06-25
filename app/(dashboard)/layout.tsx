@@ -1,17 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { Sidebar } from '@/components/layout/Sidebar';
-import { Header } from '@/components/layout/Header';
 import type { Profile } from '@/types';
-
-const PAGE_TITLES: Record<string, string> = {
-  '/shipper':                  'Заявки ГУ-12',
-  '/shipper/wagons':           'Подбор вагонов',
-  '/shipper/shipments':        'Мои отправки',
-  '/wagon-owner':              'Мой вагонный парк',
-  '/wagon-owner/verify':       'Добавить вагон',
-  '/wagon-owner/shipments':    'Заявки на вагоны',
-};
 
 export default async function DashboardLayout({
   children,
