@@ -62,6 +62,8 @@ export function CargoMarket({ profile, orders, myWagons, existingApps = [] }: Pr
   const WAGONS_PREVIEW = 8;
   const [selectedWagons, setSelectedWagons] = useState<Record<string, Set<string>>>({});
   const [message, setMessage] = useState<Record<string, string>>({});
+  // key: `${orderId}__${wagonId}`
+  const [wagonPrices, setWagonPrices] = useState<Record<string, string>>({});
   const [orderErrors, setOrderErrors] = useState<Record<string, string>>({});
 
   // Track submitted apps in this session
@@ -95,11 +97,19 @@ export function CargoMarket({ profile, orders, myWagons, existingApps = [] }: Pr
     setOrderErrors((e) => { const n = { ...e }; delete n[orderId]; return n; });
 
     const supabase = createClient();
+    // Validate all selected wagons have a price
+    const missingPrice = wagonIds.find((wId) => !wagonPrices[`${orderId}__${wId}`]);
+    if (missingPrice) {
+      setOrderErrors((e) => ({ ...e, [orderId]: 'Укажите цену для каждого выбранного вагона' }));
+      setApplying(null);
+      return;
+    }
     const rows = wagonIds.map((wagonId) => ({
       gu12_order_id: orderId,
       wagon_owner_id: profile.id,
       wagon_id: wagonId,
       message: message[orderId] || null,
+      offered_price: parseFloat(wagonPrices[`${orderId}__${wagonId}`]),
     }));
 
     const { error: err } = await supabase.from('wagon_owner_pending_requests').upsert(rows, { onConflict: 'gu12_order_id,wagon_id' });
@@ -331,28 +341,48 @@ export function CargoMarket({ profile, orders, myWagons, existingApps = [] }: Pr
                         const visible = isExpanded ? compatibleWagons : compatibleWagons.slice(0, WAGONS_PREVIEW);
                         const hidden = compatibleWagons.length - WAGONS_PREVIEW;
                         return (<>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-1">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-1.5">
                         {visible.map((w) => {
                           const isChecked = checkedForOrder.has(w.id);
                           const isPending = hasAppForWagon(order.id, w.id);
+                          const priceKey = `${order.id}__${w.id}`;
                           return (
-                            <label key={w.id} className={`flex items-center gap-2 px-2 py-1.5 rounded-lg border cursor-pointer transition-colors ${
+                            <div key={w.id} className={`rounded-lg border transition-colors ${
                               isChecked ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-200 hover:bg-gray-50'
                             }`}>
-                              <input
-                                type="checkbox"
-                                checked={isChecked}
-                                onChange={() => toggleWagon(order.id, w.id)}
-                                className="rounded border-gray-300 text-blue-600 cursor-pointer shrink-0"
-                              />
-                              <div className="flex-1 min-w-0">
-                                <div className="font-mono text-xs font-semibold text-gray-900">{w.number}</div>
-                                <div className="text-[11px] text-gray-400 truncate">{WAGON_TYPE_LABELS[w.wagon_type]} · {w.payload_capacity_tons}т</div>
-                              </div>
-                              {isPending && (
-                                <span title="На рассмотрении"><Clock size={10} className="text-amber-500 shrink-0" /></span>
+                              <label className="flex items-center gap-2 px-2 py-1.5 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={() => toggleWagon(order.id, w.id)}
+                                  className="rounded border-gray-300 text-blue-600 cursor-pointer shrink-0"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-mono text-xs font-semibold text-gray-900">{w.number}</div>
+                                  <div className="text-[11px] text-gray-400 truncate">{WAGON_TYPE_LABELS[w.wagon_type]} · {w.payload_capacity_tons}т</div>
+                                </div>
+                                {isPending && (
+                                  <span title="На рассмотрении"><Clock size={10} className="text-amber-500 shrink-0" /></span>
+                                )}
+                              </label>
+                              {isChecked && (
+                                <div className="px-2 pb-1.5">
+                                  <div className="relative">
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      placeholder="Цена *"
+                                      required
+                                      className="w-full rounded border border-gray-200 text-xs px-2 py-1 pr-5 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white placeholder-gray-400"
+                                      value={wagonPrices[priceKey] ?? ''}
+                                      onChange={(e) => setWagonPrices((p) => ({ ...p, [priceKey]: e.target.value }))}
+                                      onClick={(e) => e.preventDefault()}
+                                    />
+                                    <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-gray-400 pointer-events-none">₸</span>
+                                  </div>
+                                </div>
                               )}
-                            </label>
+                            </div>
                           );
                         })}
                       </div>
@@ -371,7 +401,7 @@ export function CargoMarket({ profile, orders, myWagons, existingApps = [] }: Pr
                       )}
                       <div className="flex flex-wrap items-center gap-2">
                         <input
-                          className="flex-1 min-w-[180px] rounded-lg border border-gray-200 text-xs px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700 placeholder-gray-400"
+                          className="flex-1 min-w-[160px] rounded-lg border border-gray-200 text-xs px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700 placeholder-gray-400"
                           placeholder={tm('commentPlaceholder')}
                           value={message[order.id] ?? ''}
                           onChange={(e) => setMessage((m) => ({ ...m, [order.id]: e.target.value }))}

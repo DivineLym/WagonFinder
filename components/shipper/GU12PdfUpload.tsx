@@ -436,8 +436,8 @@ export function GU12PdfUpload({ shipperId, existingNumbers = [], onSaved }: Prop
         onChange={(e) => { if (e.target.files?.length) handleFiles(e.target.files); }}
       />
 
-      <Button variant="secondary" size="md" onClick={() => { setOpen(true); setStep('idle'); }}>
-        <FileText size={14} /> Загрузить PDF ГУ-12
+      <Button variant="secondary" size="md" onClick={() => { setOpen(true); setStep('review'); setForm({}); setIsDuplicate(false); }}>
+        <FileText size={14} /> Загрузить Груз
       </Button>
 
       {open && (
@@ -670,7 +670,8 @@ export function GU12PdfUpload({ shipperId, existingNumbers = [], onSaved }: Prop
 
               {(step === 'review' || step === 'saving') && (
                 <div className="space-y-4">
-                  {/* Recognition quality */}
+                  {/* Recognition quality — only show when PDF was parsed */}
+                  {filledCount > 0 && (
                   <div className="flex items-center gap-3 bg-gray-50 rounded-lg px-4 py-2.5">
                     <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
                       <div
@@ -682,6 +683,7 @@ export function GU12PdfUpload({ shipperId, existingNumbers = [], onSaved }: Prop
                       Распознано {filledCount} из {totalFields} полей
                     </span>
                   </div>
+                  )}
 
                   {isDuplicate && (
                     <div className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-300 px-3 py-2.5 text-sm text-amber-800">
@@ -711,7 +713,6 @@ export function GU12PdfUpload({ shipperId, existingNumbers = [], onSaved }: Prop
                   <p className="text-sm text-gray-500">Проверьте данные и при необходимости исправьте:</p>
 
                   <div className="grid grid-cols-2 gap-3">
-                    {field('№ ГУ-12', 'gu12_number')}
                     {field('Количество вагонов', 'quantity_planned', 'number')}
                     {(() => {
                       const w = validateEtsng(form.cargo_etsng_code);
@@ -752,11 +753,19 @@ export function GU12PdfUpload({ shipperId, existingNumbers = [], onSaved }: Prop
             </div>
 
             {(step === 'review' || step === 'saving') && (
-              <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-100 shrink-0">
-                <Button variant="secondary" onClick={close}>Отмена</Button>
-                <Button onClick={save} loading={step === 'saving'}>
-                  <CheckCircle size={14} /> Сохранить заявку
-                </Button>
+              <div className="flex items-center justify-between gap-2 px-6 py-4 border-t border-gray-100 shrink-0">
+                <button
+                  onClick={() => inputRef.current?.click()}
+                  className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-blue-600 cursor-pointer transition-colors border border-gray-200 rounded-lg px-3 py-1.5 hover:border-blue-300"
+                >
+                  <FileText size={13} /> Загрузить PDF
+                </button>
+                <div className="flex gap-2">
+                  <Button variant="secondary" onClick={close}>Отмена</Button>
+                  <Button onClick={save} loading={step === 'saving'}>
+                    <CheckCircle size={14} /> Сохранить заявку
+                  </Button>
+                </div>
               </div>
             )}
           </div>

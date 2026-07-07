@@ -28,6 +28,9 @@ export function AvailableWagonsView({ profile, wagons, orders }: Props) {
   const [requesting, setRequesting] = useState<string | null>(null);
   const [sent, setSent] = useState<Set<string>>(new Set());
   const [error, setError] = useState('');
+  // priceModal: wagon being priced before send
+  const [priceModal, setPriceModal] = useState<WagonWithOwner | null>(null);
+  const [priceInput, setPriceInput] = useState('');
   const [sortKey, setSortKey] = useState<SortKey | null>('total');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
 
@@ -38,18 +41,24 @@ export function AvailableWagonsView({ profile, wagons, orders }: Props) {
     else { setSortKey(key); setSortDir(defaultDesc.includes(key) ? 'desc' : 'asc'); }
   }
 
-  async function requestWagon(wagon: WagonWithOwner) {
+  async function requestWagon(wagon: WagonWithOwner, price: string) {
     if (!selectedOrder || !wagon.owner?.id) return;
     const key = `${selectedOrder}-${wagon.id}`;
     setRequesting(key);
     setError('');
     const supabase = createClient();
+    if (!price || parseFloat(price) <= 0) {
+      setError('Укажите цену');
+      setRequesting(null);
+      return;
+    }
     const { error: err } = await supabase.from('shipper_pending_requests').insert({
       gu12_order_id: selectedOrder,
       shipper_id: profile.id,
       wagon_id: wagon.id,
       wagon_owner_id: wagon.owner.id,
       message: null,
+      offered_price: parseFloat(price),
     });
     if (err) {
       setError(err.message.includes('unique') ? tw('alreadySent') : err.message);
@@ -57,6 +66,8 @@ export function AvailableWagonsView({ profile, wagons, orders }: Props) {
       setSent((s) => new Set(s).add(key));
     }
     setRequesting(null);
+    setPriceModal(null);
+    setPriceInput('');
   }
 
   const activeOrder = orders.find((o) => o.id === selectedOrder);
@@ -257,7 +268,7 @@ export function AvailableWagonsView({ profile, wagons, orders }: Props) {
                             <CheckCircle size={12} /> {tw('requestSent')}
                           </span>
                         ) : (
-                          <Button size="sm" loading={requesting === key} onClick={() => requestWagon(wagon)}>
+                          <Button size="sm" onClick={() => { setPriceModal(wagon); setPriceInput(''); }}>
                             <Send size={12} /> {tw('request')}
                           </Button>
                         );
@@ -274,6 +285,38 @@ export function AvailableWagonsView({ profile, wagons, orders }: Props) {
         <p className="text-xs text-gray-400 text-right shrink-0 px-6 py-2 border-t border-gray-100 bg-white">
           {tw('tariffDisclaimer')}
         </p>
+      )}
+
+      {priceModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setPriceModal(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold text-gray-900 mb-1">Запрос вагона</h3>
+            <p className="text-xs text-gray-500 mb-4">Вагон <span className="font-mono font-medium text-gray-800">{priceModal.number}</span></p>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Ваша предлагаемая цена (необязательно)</label>
+            <div className="relative mb-4">
+              <input
+                type="number"
+                min="0"
+                placeholder="Введите сумму"
+                autoFocus
+                className="w-full rounded-lg border border-gray-200 text-sm px-3 py-2 pr-8 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={priceInput}
+                onChange={(e) => setPriceInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && requestWagon(priceModal, priceInput)}
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-400 pointer-events-none">₸</span>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" className="flex-1" loading={!!requesting} onClick={() => requestWagon(priceModal, priceInput)}>
+                <Send size={12} /> Отправить запрос
+              </Button>
+              <button onClick={() => setPriceModal(null)}
+                className="px-4 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 cursor-pointer transition-colors">
+                Отмена
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
