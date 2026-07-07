@@ -9,48 +9,67 @@ import type { Contract, Profile } from '@/types';
 import { calcCommission } from '@/services/commissionService';
 import { useTranslations } from 'next-intl';
 
+const COMMISSION_RATES = [
+  { range: '1–5',         commission: 7_800 },
+  { range: '6–20',        commission: 6_500 },
+  { range: '21–60',       commission: 5_200 },
+  { range: '61–80',       commission: 3_250 },
+  { range: '81–120',      commission: 1_950 },
+  { range: '121–160',     commission:   972 },
+  { range: '161–200',     commission:   850 },
+  { range: '201–299',     commission:   660 },
+  { range: '300–399',     commission:   575 },
+  { range: '400–599',     commission:   527 },
+  { range: '600–999',     commission:   480 },
+  { range: '1 000–1 999', commission:   469 },
+  { range: '2 000–2 999', commission:   450 },
+  { range: '3 000–4 999', commission:   439 },
+  { range: '5 000–9 999', commission:   408 },
+  { range: '10 000+',     commission:   360 },
+];
+
 function CommissionRatesInfo() {
   const [open, setOpen] = useState(false);
   return (
-    <div className="shrink-0">
-      <button onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 cursor-pointer transition-colors px-1">
+    <>
+      <button onClick={() => setOpen(true)}
+        className="shrink-0 flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 cursor-pointer transition-colors px-1">
         <CreditCard size={13} />
         <span className="font-medium">Ставки комиссии платформы</span>
-        <span className="text-blue-400">{open ? '▲' : '▼'}</span>
       </button>
+
       {open && (
-        <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50 overflow-hidden">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="bg-blue-100">
-                <th className="text-left px-3 py-2 font-semibold text-blue-700">Кол-во вагонов</th>
-                <th className="text-right px-3 py-2 font-semibold text-blue-700">Тех. рейс (за вагон)</th>
-                <th className="text-right px-3 py-2 font-semibold text-blue-700">Аренда (за вагон)</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-blue-100">
-              {[
-                { range: '1–5',    spot: '12 000 ₸', lease: '1 881 ₸' },
-                { range: '6–19',   spot: '10 000 ₸', lease: '1 881 ₸' },
-                { range: '20–30',  spot: '8 000 ₸',  lease: '1 496 ₸' },
-                { range: '31–49',  spot: '5 000 ₸',  lease: '1 496 ₸' },
-                { range: '50–59',  spot: '5 000 ₸',  lease: '1 308 ₸' },
-                { range: '60–99',  spot: '3 000 ₸',  lease: '1 308 ₸' },
-                { range: '100–199',spot: '3 000 ₸',  lease: '1 016 ₸' },
-                { range: '200+',   spot: '3 000 ₸',  lease: 'от 884 ₸' },
-              ].map(({ range, spot, lease }) => (
-                <tr key={range} className="hover:bg-blue-100/50">
-                  <td className="px-3 py-1.5 text-blue-800 font-medium">{range}</td>
-                  <td className="px-3 py-1.5 text-right text-blue-700">{spot}</td>
-                  <td className="px-3 py-1.5 text-right text-blue-700">{lease}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <CreditCard size={15} className="text-blue-600" />
+                <span className="font-semibold text-gray-900 text-sm">Ставки комиссии платформы</span>
+              </div>
+              <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-gray-600 cursor-pointer transition-colors">✕</button>
+            </div>
+            <div className="overflow-auto max-h-[70vh]">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0">
+                  <tr className="bg-gray-50 border-b border-gray-100">
+                    <th className="text-left px-5 py-3 font-semibold text-gray-600 text-xs uppercase tracking-wide">Кол-во вагонов</th>
+                    <th className="text-right px-5 py-3 font-semibold text-gray-600 text-xs uppercase tracking-wide">Комиссия за вагон</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {COMMISSION_RATES.map(({ range, commission }) => (
+                    <tr key={range} className="hover:bg-gray-50">
+                      <td className="px-5 py-2.5 text-gray-700">{range}</td>
+                      <td className="px-5 py-2.5 text-right font-medium text-blue-700">{commission.toLocaleString('ru-KZ')} ₸</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 

@@ -321,8 +321,8 @@ export function ShipperCargoView({ profile, initialOrders, initialApplications }
                     </th>
                   )}
                   {(cargoTab === 'active'
-                    ? [ts('orderNumber'), ts('cargo'), ts('route'), ts('shipped'), ts('period'), '']
-                    : [ts('orderNumber'), ts('cargo'), ts('route'), ts('fulfilled'), ts('period')]
+                    ? ['Тип рейса', ts('cargo'), ts('route'), ts('shipped'), ts('period'), '']
+                    : ['Тип рейса', ts('cargo'), ts('route'), ts('fulfilled'), ts('period')]
                   ).map((h) => (
                     <th key={h} className="text-left px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                   ))}
@@ -342,7 +342,6 @@ export function ShipperCargoView({ profile, initialOrders, initialApplications }
                         </td>
                       )}
                       <td className="px-3 py-3 whitespace-nowrap">
-                        <div className="font-mono text-xs text-blue-700 font-medium">{order.gu12_number}</div>
                         <button
                           onClick={() => toggleDealType(order)}
                           title={order.deal_type === 'spot' ? ts('dealTypeSpot') : ts('dealTypeLease')}
