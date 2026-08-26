@@ -45,7 +45,6 @@ create table public.wagons (
   id            uuid primary key default uuid_generate_v4(),
   number        text not null unique check (number ~ '^\d{8}$'), -- 8-digit wagon number
   owner_id      uuid not null references public.profiles(id) on delete cascade,
-  is_verified   boolean not null default false,
 
   -- Tech Passport
   wagon_type    text not null check (wagon_type in ('tank', 'hopper', 'flatcar', 'boxcar', 'gondola', 'refrigerator')),
@@ -78,9 +77,9 @@ create policy "Wagon owners can manage their wagons"
   on public.wagons for all
   using (auth.uid() = owner_id);
 
-create policy "Shippers can view verified active wagons"
+create policy "Shippers can view active wagons"
   on public.wagons for select
-  using (is_verified = true and status = 'active');
+  using (status = 'active');
 
 -- ============================================================
 -- GU-12 ORDERS (The Plan — import from KTZ ASOUP)
@@ -269,7 +268,7 @@ create policy "Anyone can read cargos" on public.etsng_cargos for select using (
 -- INDEXES
 -- ============================================================
 create index idx_wagons_owner on public.wagons(owner_id);
-create index idx_wagons_status on public.wagons(status, is_verified);
+create index idx_wagons_status on public.wagons(status);
 create index idx_gu12_shipper on public.gu12_orders(shipper_id);
 create index idx_gu12_status on public.gu12_orders(status);
 create index idx_shipments_shipper on public.shipments(shipper_id);

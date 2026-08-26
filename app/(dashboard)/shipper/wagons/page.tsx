@@ -16,7 +16,6 @@ export default async function ShipperWagonsPage() {
     supabase
       .from('wagons')
       .select('*, owner:owner_id(id, full_name, company_name)')
-      .eq('is_verified', true)
       .eq('status', 'active'),
     supabase
       .from('gu12_orders')

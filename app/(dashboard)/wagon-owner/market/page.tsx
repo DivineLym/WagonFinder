@@ -17,7 +17,7 @@ export default async function MarketPage() {
       .eq('is_public', true)
       .eq('status', 'active')
       .order('created_at', { ascending: false }),
-    supabase.from('wagons').select('*').eq('owner_id', user.id).eq('is_verified', true).eq('status', 'active'),
+    supabase.from('wagons').select('*').eq('owner_id', user.id).eq('status', 'active'),
   ]);
 
   if (!profile) redirect('/login');

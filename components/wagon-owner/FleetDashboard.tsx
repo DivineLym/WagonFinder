@@ -116,7 +116,6 @@ export function FleetDashboard({ profile, wagons: initial }: Props) {
   const [filterAvail, setFilterAvail] = useState('');
 
   const total = wagons.length;
-  const verified = wagons.filter((w) => w.is_verified).length;
   const active = wagons.filter((w) => w.status === 'active').length;
   const criticalRepair = wagons.filter((w) => { const d = daysUntil(w.next_repair_date); return d !== null && d < 30; }).length;
 
@@ -217,7 +216,6 @@ export function FleetDashboard({ profile, wagons: initial }: Props) {
     const { error } = await supabase.from('wagons').insert({
       number: form.number,
       owner_id: profile.id,
-      is_verified: false,
       wagon_type: form.wagon_type,
       model_number: form.model_number || null,
       payload_capacity_tons: form.payload_capacity_tons ? Number(form.payload_capacity_tons) : null,

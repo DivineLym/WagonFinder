@@ -86,7 +86,6 @@ export async function seedWagonOwnerData(profileId: string) {
     {
       number: '52314789',
       owner_id: profileId,
-      is_verified: true,
       wagon_type: 'tank',
       payload_capacity_tons: 72,
       volume_m3: 85,
@@ -102,7 +101,6 @@ export async function seedWagonOwnerData(profileId: string) {
     {
       number: '63847210',
       owner_id: profileId,
-      is_verified: true,
       wagon_type: 'hopper',
       payload_capacity_tons: 70,
       volume_m3: 88,
@@ -118,7 +116,6 @@ export async function seedWagonOwnerData(profileId: string) {
     {
       number: '74920183',
       owner_id: profileId,
-      is_verified: true,
       wagon_type: 'gondola',
       payload_capacity_tons: 69,
       volume_m3: 73,
@@ -134,7 +131,6 @@ export async function seedWagonOwnerData(profileId: string) {
     {
       number: '81034567',
       owner_id: profileId,
-      is_verified: true,
       wagon_type: 'flatcar',
       payload_capacity_tons: 71,
       volume_m3: 0,
@@ -150,7 +146,6 @@ export async function seedWagonOwnerData(profileId: string) {
     {
       number: '92841076',
       owner_id: profileId,
-      is_verified: false,
       wagon_type: 'tank',
       payload_capacity_tons: 72,
       volume_m3: 85,
@@ -222,7 +217,6 @@ export async function seedBulkData(wagonOwnerId: string) {
     return {
       number: String(10000000 + i * 137 + rndInt(0, 99)),
       owner_id: wagonOwnerId,
-      is_verified: Math.random() > 0.2,
       wagon_type: type,
       payload_capacity_tons: rndInt(60, 75),
       volume_m3: type === 'flatcar' ? 0 : rndInt(65, 95),

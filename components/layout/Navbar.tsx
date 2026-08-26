@@ -22,10 +22,9 @@ export function Navbar({ profile }: NavbarProps) {
         { href: '/shipper/shipments', label: 'Отправки', icon: LayoutDashboard },
       ]
     : [
-        { href: '/wagon-owner', label: 'Мой парк', icon: Train },
-        { href: '/wagon-owner/verify', label: 'Добавить вагон', icon: Package },
-        { href: '/wagon-owner/shipments', label: 'Заявки', icon: LayoutDashboard },
-      ];
+      { href: '/wagon-owner', label: 'Мой парк', icon: Train },
+      { href: '/wagon-owner/shipments', label: 'Заявки', icon: LayoutDashboard },
+    ];
 
   async function signOut() {
     const supabase = createClient();

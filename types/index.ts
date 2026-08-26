@@ -40,7 +40,6 @@ export interface Wagon {
   id: string;
   number: string;
   owner_id: string;
-  is_verified: boolean;
   wagon_type: WagonType;
   payload_capacity_tons: number | null;
   volume_m3: number | null;
